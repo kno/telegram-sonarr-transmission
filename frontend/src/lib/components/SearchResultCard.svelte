@@ -3,7 +3,7 @@
 	import { formatSize, formatDate, addDownload } from '$lib/api';
 	import { settings } from '$lib/stores.svelte';
 
-	let { result }: { result: SearchResult } = $props();
+	let { result, channelName }: { result: SearchResult; channelName?: string } = $props();
 
 	let downloading = $state(false);
 	let downloaded = $state(false);
@@ -40,7 +40,12 @@
 	{/if}
 
 	<div class="flex items-center justify-between">
-		<div class="flex items-center gap-3 text-xs text-(--color-text-muted)">
+		<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-(--color-text-muted)">
+			{#if channelName}
+				<span class="rounded bg-(--color-primary)/10 px-1.5 py-0.5 text-xs font-medium text-(--color-primary)">
+					{channelName}
+				</span>
+			{/if}
 			<span>{formatDate(result.pubDate)}</span>
 			{#if result.link}
 				<a href={result.link} target="_blank" rel="noopener" class="text-(--color-primary) hover:underline">

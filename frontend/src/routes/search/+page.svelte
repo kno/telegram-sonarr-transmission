@@ -68,6 +68,10 @@
 
 	const hasMore = $derived(offset + limit < total);
 	const hasPrev = $derived(offset > 0);
+
+	const channelMap = $derived(
+		new Map(channelsStore.channels.map((c) => [c.id, c.name]))
+	);
 </script>
 
 <svelte:head>
@@ -130,7 +134,7 @@
 
 	<div class="grid gap-3">
 		{#each results as result (result.guid)}
-			<SearchResultCard {result} />
+			<SearchResultCard {result} channelName={channelMap.get(result.categoryId)} />
 		{/each}
 	</div>
 

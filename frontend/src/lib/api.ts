@@ -3,7 +3,8 @@ import type { Channel, SearchResult, SearchResponse, Download, SessionStats } fr
 
 const xmlParser = new XMLParser({
 	ignoreAttributes: false,
-	attributeNamePrefix: '@_'
+	attributeNamePrefix: '@_',
+	removeNSPrefix: true
 });
 
 // --- Settings (localStorage) ---
@@ -87,7 +88,7 @@ export async function search(params: {
 	const channel = parsed?.rss?.channel;
 	if (!channel) return { total: 0, offset: 0, items: [] };
 
-	const response = channel['newznab:response'] || channel['ns1:response'] || {};
+	const response = channel['response'] || {};
 	const total = parseInt(response['@_total'] || '0');
 	const offset = parseInt(response['@_offset'] || '0');
 
@@ -96,10 +97,14 @@ export async function search(params: {
 	if (!Array.isArray(rawItems)) rawItems = [rawItems];
 
 	const items: SearchResult[] = rawItems.map((item: any) => {
-		const attrs = item['torznab:attr'] || item['ns0:attr'] || [];
+		const attrs = item['attr'] || [];
 		const attrList = Array.isArray(attrs) ? attrs : [attrs];
+		// Standard Newznab categories (TV: 5000+, Movies: 2000+) — skip these
+		const NEWZNAB_CATS = new Set([2000, 2030, 2040, 2045, 5000, 5030, 5040, 5045]);
 		const catAttr = attrList.find(
-			(a: any) => a['@_name'] === 'category' && parseInt(a['@_value']) >= 1000
+			(a: any) =>
+				a['@_name'] === 'category' &&
+				!NEWZNAB_CATS.has(parseInt(a['@_value']))
 		);
 
 		return {
