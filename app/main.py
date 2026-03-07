@@ -1,7 +1,9 @@
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.channels import init_channels
 from app.telegram_client import connect_client, disconnect_client
@@ -35,6 +37,17 @@ app.include_router(stream_router)
 app.include_router(transmission_router)
 
 
-@app.get("/")
-async def root():
+@app.get("/health")
+async def health():
     return {"status": "ok", "service": "Telegram Torznab"}
+
+
+# Serve SvelteKit static frontend (must be last, after all API routes)
+_frontend_dir = Path(__file__).resolve().parent.parent / "frontend" / "build"
+if _frontend_dir.is_dir():
+    app.mount("/", StaticFiles(directory=str(_frontend_dir), html=True), name="frontend")
+else:
+
+    @app.get("/")
+    async def root():
+        return {"status": "ok", "service": "Telegram Torznab"}
