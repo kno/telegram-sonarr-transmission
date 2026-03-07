@@ -284,6 +284,9 @@ async def _torrent_add(args):
     }
 
 
+STREAM_CHUNK_SIZE = 1024 * 1024  # 1MB — Pyrogram's stream_media chunk size
+
+
 async def _download_from_telegram(torrent_id: int):
     info = _downloads.get(torrent_id)
     if not info:
@@ -316,48 +319,72 @@ async def _download_from_telegram(torrent_id: int):
         os.makedirs(info["downloadDir"], exist_ok=True)
         tmp_path = dest_path + ".tmp"
 
+        # Resume support: check existing .tmp file size
+        downloaded = 0
+        if os.path.exists(tmp_path):
+            downloaded = os.path.getsize(tmp_path)
+            # Align to chunk boundary (stream_media works in 1MB chunks)
+            downloaded = (downloaded // STREAM_CHUNK_SIZE) * STREAM_CHUNK_SIZE
+            if downloaded >= file_size:
+                downloaded = 0  # Corrupted, restart
+            if downloaded > 0:
+                # Truncate to aligned boundary in case last chunk was partial
+                with open(tmp_path, "r+b") as f:
+                    f.truncate(downloaded)
+                logger.info(
+                    "Resuming download at %.1f MB / %.1f MB: %s",
+                    downloaded / 1048576, file_size / 1048576, filename,
+                )
+
+        info["downloadedEver"] = downloaded
+        info["leftUntilDone"] = max(0, file_size - downloaded)
+        info["percentDone"] = downloaded / file_size if file_size > 0 else 0
+        info["files"][0]["bytesCompleted"] = downloaded
+        info["fileStats"][0]["bytesCompleted"] = downloaded
+
         # Progress tracking
         last_save_time = time.time()
         last_speed_time = time.time()
-        last_speed_received = 0
+        last_speed_received = downloaded
 
-        def _progress_callback(current, total):
+        def _update_progress(total_received: int):
             nonlocal last_save_time, last_speed_time, last_speed_received
             now = time.time()
 
-            info["downloadedEver"] = current
-            info["leftUntilDone"] = max(0, total - current)
-            info["percentDone"] = current / total if total > 0 else 0
-            info["files"][0]["bytesCompleted"] = current
-            info["fileStats"][0]["bytesCompleted"] = current
+            info["downloadedEver"] = total_received
+            info["leftUntilDone"] = max(0, file_size - total_received)
+            info["percentDone"] = total_received / file_size if file_size > 0 else 0
+            info["files"][0]["bytesCompleted"] = total_received
+            info["fileStats"][0]["bytesCompleted"] = total_received
             info["secondsDownloading"] = int(now - info["_start_time"])
 
             elapsed = now - last_speed_time
             if elapsed >= 2:
-                info["rateDownload"] = int((current - last_speed_received) / elapsed)
-                last_speed_received = current
+                info["rateDownload"] = int((total_received - last_speed_received) / elapsed)
+                last_speed_received = total_received
                 last_speed_time = now
 
             speed = info.get("rateDownload", 0)
-            remaining = total - current
+            remaining = file_size - total_received
             info["eta"] = int(remaining / speed) if speed > 0 and remaining > 0 else -1
 
             if now - last_save_time > 5:
                 last_save_time = now
                 _save_state()
 
-        logger.info("Downloading %s (%.1f MB) via Pyrogram", filename, file_size / 1048576)
-
-        # Pyrogram's download_media uses multiple connections internally
-        # and is significantly faster than Telethon's iter_download
-        await client.download_media(
-            message,
-            file_name=tmp_path,
-            progress=_progress_callback,
+        chunk_offset = downloaded // STREAM_CHUNK_SIZE
+        logger.info(
+            "Downloading %s (%.1f MB) via Pyrogram stream_media, offset chunk %d",
+            filename, file_size / 1048576, chunk_offset,
         )
 
+        with open(tmp_path, "ab") as f:
+            async for chunk in client.stream_media(message, offset=chunk_offset):
+                f.write(chunk)
+                downloaded += len(chunk)
+                _update_progress(downloaded)
+
         os.rename(tmp_path, dest_path)
-        info.pop("segments", None)
 
         # Mark completed
         info["status"] = 6  # TR_STATUS_SEED
