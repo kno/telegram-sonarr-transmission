@@ -107,24 +107,18 @@ async def download_torrent(
 
     client = get_client()
     try:
-        entity = await client.get_entity(int(chat_id))
-        message = await client.get_messages(entity, ids=msg_id_int)
+        message = await client.get_messages(int(chat_id), msg_id_int)
     except Exception as e:
         logger.error("Failed to get message %s:%s: %s", chat_id, msg_id, e)
         return torznab_error(300, "Message not found")
 
-    if not message or not message.media:
+    if not message or not message.document:
         return torznab_error(300, "Message has no downloadable media")
 
     # Extract metadata (fast, no file download)
-    doc = message.media.document
-    filename = f"file_{message.id}"
-    for attr in doc.attributes:
-        if hasattr(attr, "file_name"):
-            filename = attr.file_name
-            break
-
-    size = doc.size or 0
+    doc = message.document
+    filename = doc.file_name or f"file_{message.id}"
+    size = doc.file_size or 0
 
     # Generate minimal .torrent instantly
     torrent_bytes = create_minimal_torrent(filename, size, chat_id, msg_id_int)

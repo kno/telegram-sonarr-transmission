@@ -30,44 +30,34 @@ def main():
         print("Create .env from .env.example", file=sys.stderr)
         sys.exit(1)
 
-    from telethon import TelegramClient
-    from telethon.errors import SessionPasswordNeededError
+    import asyncio
+    from pyrogram import Client
 
     session_path = os.path.join(SESSION_DIR, SESSION_NAME)
     os.makedirs(SESSION_DIR, exist_ok=True)
 
-    print(f"Authenticating with Telegram...")
+    print("Authenticating with Telegram...")
     print(f"Phone: {PHONE}")
     print(f"Session: {session_path}")
 
-    client = TelegramClient(session_path, int(API_ID), API_HASH)
+    client = Client(
+        session_path,
+        api_id=int(API_ID),
+        api_hash=API_HASH,
+        phone_number=PHONE,
+    )
 
     async def do_auth():
-        await client.connect()
-
-        if await client.is_user_authorized():
-            print("Already authenticated!")
-            me = await client.get_me()
-            print(f"User: {me.first_name} (@{me.username})")
-            return
-
-        print("Sending verification code...")
-        await client.send_code_request(PHONE)
-
-        code = input("Enter the code you received on Telegram: ")
-
+        await client.start()
         try:
-            await client.sign_in(PHONE, code)
-        except SessionPasswordNeededError:
-            password = input("Enter your 2FA password: ")
-            await client.sign_in(password=password)
+            me = await client.get_me()
+            print("Authentication successful!")
+            print(f"User: {me.first_name} (@{me.username})")
+        finally:
+            await client.storage.save()
+            await client.storage.close()
 
-        print("Authentication successful!")
-        me = await client.get_me()
-        print(f"User: {me.first_name} (@{me.username})")
-
-    with client:
-        client.loop.run_until_complete(do_auth())
+    asyncio.run(do_auth())
 
     print(f"Session saved to: {session_path}.session")
 

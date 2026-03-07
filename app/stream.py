@@ -53,27 +53,21 @@ async def stream_file(
     if not cached:
         client = get_client()
         try:
-            entity = await client.get_entity(int(chat_id))
-            message = await client.get_messages(entity, ids=int(msg_id))
+            message = await client.get_messages(int(chat_id), int(msg_id))
         except Exception as e:
             logger.error("Stream: failed to get message %s:%s: %s", chat_id, msg_id, e)
             return torznab_error(300, "Message not found")
 
-        if not message or not message.media:
+        if not message or not message.document:
             return torznab_error(300, "No downloadable media")
 
-        filename = f"file_{msg_id}"
-        if hasattr(message.media, "document"):
-            for attr in message.media.document.attributes:
-                if hasattr(attr, "file_name"):
-                    filename = attr.file_name
-                    break
+        filename = message.document.file_name or f"file_{msg_id}"
 
         safe_name = filename.replace("/", "_").replace("\\", "_")
         cached = os.path.join(settings.DOWNLOAD_DIR, f"{chat_id}_{msg_id}_{safe_name}")
         os.makedirs(settings.DOWNLOAD_DIR, exist_ok=True)
         logger.info("Stream fallback: downloading %s from Telegram", filename)
-        await client.download_media(message, file=cached)
+        await client.download_media(message, file_name=cached)
 
     file_size = os.path.getsize(cached)
     filename = os.path.basename(cached).split("_", 2)[-1]  # Remove chat_id_msg_id_ prefix

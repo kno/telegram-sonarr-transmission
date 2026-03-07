@@ -61,19 +61,19 @@ def import_user_channels(path: str) -> list[dict]:
 
 
 async def auto_discover_channels(client) -> list[dict]:
-    """Discover channels via Telegram iter_dialogs()."""
-    from telethon.tl.types import Channel
+    """Discover channels via Telegram get_dialogs()."""
+    from pyrogram.enums import ChatType
 
     channels = []
     cat_id = 1000
-    async for dialog in client.iter_dialogs():
-        entity = dialog.entity
-        if isinstance(entity, Channel):
+    async for dialog in client.get_dialogs():
+        chat = dialog.chat
+        if chat.type in (ChatType.CHANNEL, ChatType.SUPERGROUP):
             channels.append({
-                "chat_id": str(dialog.id),
+                "chat_id": str(chat.id),
                 "category_id": cat_id,
-                "name": dialog.name or "Unknown",
-                "username": entity.username,
+                "name": chat.title or "Unknown",
+                "username": chat.username,
             })
             cat_id += 1
     logger.info("Discovered %d channels via Telegram", len(channels))

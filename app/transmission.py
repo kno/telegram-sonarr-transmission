@@ -284,9 +284,6 @@ async def _torrent_add(args):
     }
 
 
-PARALLEL_WORKERS = 4
-
-
 async def _download_from_telegram(torrent_id: int):
     info = _downloads.get(torrent_id)
     if not info:
@@ -297,24 +294,19 @@ async def _download_from_telegram(torrent_id: int):
 
     try:
         client = get_client()
-        entity = await client.get_entity(int(info["chat_id"]))
-        message = await client.get_messages(entity, ids=info["msg_id"])
+        message = await client.get_messages(int(info["chat_id"]), info["msg_id"])
 
-        if not message or not message.media:
+        if not message or not message.document:
             info["error"] = 1
             info["errorString"] = "No media in message"
             info["status"] = 0
             _save_state()
             return
 
-        doc = message.media.document
-        filename = info["name"]
-        for attr in doc.attributes:
-            if hasattr(attr, "file_name"):
-                filename = attr.file_name
-                break
+        doc = message.document
+        filename = doc.file_name or info["name"]
+        file_size = doc.file_size or 0
 
-        file_size = doc.size or 0
         info["name"] = filename
         info["totalSize"] = file_size
         info["files"] = [{"name": filename, "length": file_size, "bytesCompleted": 0}]
@@ -324,89 +316,45 @@ async def _download_from_telegram(torrent_id: int):
         os.makedirs(info["downloadDir"], exist_ok=True)
         tmp_path = dest_path + ".tmp"
 
-        # Determine worker count (at least 1MB per worker)
-        num_workers = min(PARALLEL_WORKERS, max(1, file_size // (1024 * 1024)))
-
-        # Resume: try to reuse existing segments
-        segments = info.get("segments")
-        if segments and len(segments) == num_workers and os.path.exists(tmp_path):
-            total_done = sum(s["downloaded"] for s in segments)
-            logger.info(
-                "Resuming download with %d workers: %d/%d bytes: %s",
-                num_workers, total_done, file_size, filename,
-            )
-        else:
-            # Create fresh segments
-            seg_size = file_size // num_workers
-            segments = []
-            for i in range(num_workers):
-                start = i * seg_size
-                end = (i + 1) * seg_size if i < num_workers - 1 else file_size
-                segments.append({"start": start, "end": end, "downloaded": 0})
-            info["segments"] = segments
-            # Pre-allocate file
-            with open(tmp_path, "wb") as f:
-                f.truncate(file_size)
-            logger.info("Downloading %s with %d parallel workers", filename, num_workers)
-
         # Progress tracking
-        total_received = sum(s["downloaded"] for s in segments)
-        info["downloadedEver"] = total_received
-        info["leftUntilDone"] = max(0, file_size - total_received)
-        info["percentDone"] = total_received / file_size if file_size > 0 else 0
-        info["files"][0]["bytesCompleted"] = total_received
-        info["fileStats"][0]["bytesCompleted"] = total_received
-
-        progress_lock = asyncio.Lock()
         last_save_time = time.time()
         last_speed_time = time.time()
-        last_speed_received = total_received
+        last_speed_received = 0
 
-        async def _update_progress(chunk_len: int):
-            nonlocal total_received, last_save_time, last_speed_time, last_speed_received
-            total_received += chunk_len
+        def _progress_callback(current, total):
+            nonlocal last_save_time, last_speed_time, last_speed_received
             now = time.time()
 
-            info["downloadedEver"] = total_received
-            info["leftUntilDone"] = max(0, file_size - total_received)
-            info["percentDone"] = total_received / file_size if file_size > 0 else 0
-            info["files"][0]["bytesCompleted"] = total_received
-            info["fileStats"][0]["bytesCompleted"] = total_received
+            info["downloadedEver"] = current
+            info["leftUntilDone"] = max(0, total - current)
+            info["percentDone"] = current / total if total > 0 else 0
+            info["files"][0]["bytesCompleted"] = current
+            info["fileStats"][0]["bytesCompleted"] = current
             info["secondsDownloading"] = int(now - info["_start_time"])
 
             elapsed = now - last_speed_time
             if elapsed >= 2:
-                info["rateDownload"] = int((total_received - last_speed_received) / elapsed)
-                last_speed_received = total_received
+                info["rateDownload"] = int((current - last_speed_received) / elapsed)
+                last_speed_received = current
                 last_speed_time = now
 
             speed = info.get("rateDownload", 0)
-            remaining = file_size - total_received
+            remaining = total - current
             info["eta"] = int(remaining / speed) if speed > 0 and remaining > 0 else -1
 
             if now - last_save_time > 5:
                 last_save_time = now
                 _save_state()
 
-        async def _download_segment(seg_idx: int):
-            seg = segments[seg_idx]
-            offset = seg["start"] + seg["downloaded"]
-            remaining = seg["end"] - offset
-            if remaining <= 0:
-                return
+        logger.info("Downloading %s (%.1f MB) via Pyrogram", filename, file_size / 1048576)
 
-            with open(tmp_path, "r+b") as f:
-                f.seek(offset)
-                async for chunk in client.iter_download(
-                    doc, offset=offset, limit=remaining,
-                    request_size=524288, file_size=file_size,
-                ):
-                    f.write(chunk)
-                    seg["downloaded"] += len(chunk)
-                    async with progress_lock:
-                        await _update_progress(len(chunk))
-
-        await asyncio.gather(*[_download_segment(i) for i in range(num_workers)])
+        # Pyrogram's download_media uses multiple connections internally
+        # and is significantly faster than Telethon's iter_download
+        await client.download_media(
+            message,
+            file_name=tmp_path,
+            progress=_progress_callback,
+        )
 
         os.rename(tmp_path, dest_path)
         info.pop("segments", None)

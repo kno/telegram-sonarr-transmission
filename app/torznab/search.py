@@ -20,28 +20,22 @@ NEWZNAB_NS = "http://www.newznab.com/DTD/2010/feeds/attributes/"
 
 def _extract_media_info(message) -> Optional[dict]:
     """Extract filename, size, mime_type from a message with media."""
-    if not message.media:
+    if not message.document:
         return None
-    doc = getattr(message.media, "document", None)
-    if not doc:
-        return None
+    doc = message.document
 
     info = {
-        "size": doc.size or 0,
+        "size": doc.file_size or 0,
         "mime_type": doc.mime_type or "application/octet-stream",
-        "filename": None,
+        "filename": doc.file_name,
     }
-    for attr in doc.attributes:
-        if hasattr(attr, "file_name"):
-            info["filename"] = attr.file_name
     return info
 
 
-def _build_link(entity, message_id: int) -> str:
-    username = getattr(entity, "username", None)
-    if username:
-        return f"https://t.me/{username}/{message_id}"
-    return f"https://t.me/c/{entity.id}/{message_id}"
+def _build_link(chat, message_id: int) -> str:
+    if chat.username:
+        return f"https://t.me/{chat.username}/{message_id}"
+    return f"https://t.me/c/{chat.id}/{message_id}"
 
 
 async def _search_channel(chat_id: str, query: str, limit: int) -> list[dict]:
@@ -49,14 +43,15 @@ async def _search_channel(chat_id: str, query: str, limit: int) -> list[dict]:
     client = get_client()
     items = []
     try:
-        entity = await client.get_entity(int(chat_id))
-        async for message in client.iter_messages(entity, search=query, limit=limit):
+        chat_id_int = int(chat_id)
+        chat = await client.get_chat(chat_id_int)
+        async for message in client.search_messages(chat_id_int, query=query, limit=limit):
             media_info = _extract_media_info(message)
             if not media_info:
                 continue
 
             title = media_info["filename"] or (message.text or "Unknown")[:200]
-            link = _build_link(entity, message.id)
+            link = _build_link(chat, message.id)
             ch_mapping = get_category_by_chat(chat_id)
             cat_id = ch_mapping["category_id"] if ch_mapping else 0
 
