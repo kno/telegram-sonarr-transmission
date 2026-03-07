@@ -16,7 +16,7 @@
 <nav class="bg-(--color-surface) border-b border-(--color-border) shadow-sm">
 	<div class="mx-auto max-w-6xl px-4">
 		<div class="flex h-14 items-center justify-between">
-			<a href="/" class="text-lg font-bold text-(--color-primary)">TG Torznab</a>
+			<a href="/" class="text-lg font-bold text-(--color-primary)">Telegram Search & Download</a>
 
 			<!-- Desktop links -->
 			<div class="hidden items-center gap-1 md:flex">

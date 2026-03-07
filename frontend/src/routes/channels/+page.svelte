@@ -54,7 +54,7 @@
 </script>
 
 <svelte:head>
-	<title>Canales - TG Torznab</title>
+	<title>Canales - Telegram Search & Download</title>
 </svelte:head>
 
 <div class="mb-4 flex items-center justify-between">

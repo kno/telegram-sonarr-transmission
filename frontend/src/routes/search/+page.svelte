@@ -75,7 +75,7 @@
 </script>
 
 <svelte:head>
-	<title>Buscar - TG Torznab</title>
+	<title>Buscar - Telegram Search & Download</title>
 </svelte:head>
 
 <h1 class="mb-6 text-2xl font-bold">Buscar</h1>

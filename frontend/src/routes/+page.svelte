@@ -49,14 +49,14 @@
 </script>
 
 <svelte:head>
-	<title>Dashboard - TG Torznab</title>
+	<title>Dashboard - Telegram Search & Download</title>
 </svelte:head>
 
 <h1 class="mb-6 text-2xl font-bold">Dashboard</h1>
 
 {#if !settings.configured}
 	<div class="rounded-lg border border-(--color-border) bg-(--color-surface) p-12 text-center">
-		<p class="mb-2 text-lg font-medium">Bienvenido a TG Torznab</p>
+		<p class="mb-2 text-lg font-medium">Bienvenido a Telegram Search & Download</p>
 		<p class="mb-4 text-(--color-text-muted)">Configura tu API key para empezar.</p>
 		<a
 			href="/settings"

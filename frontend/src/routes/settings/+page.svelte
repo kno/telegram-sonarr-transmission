@@ -31,7 +31,7 @@
 </script>
 
 <svelte:head>
-	<title>Configuracion - TG Torznab</title>
+	<title>Configuracion - Telegram Search & Download</title>
 </svelte:head>
 
 <div class="mx-auto max-w-lg">

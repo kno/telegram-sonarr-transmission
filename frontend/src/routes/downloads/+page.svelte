@@ -49,7 +49,7 @@
 </script>
 
 <svelte:head>
-	<title>Descargas - TG Torznab</title>
+	<title>Descargas - Telegram Search & Download</title>
 </svelte:head>
 
 <div class="mb-6 flex items-center justify-between">
