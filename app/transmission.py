@@ -1,0 +1,350 @@
+import asyncio
+import base64
+import logging
+import os
+import time
+import uuid
+
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
+
+from app.config import settings
+from app.download import _bdecode
+from app.telegram_client import get_client
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+# Session ID for CSRF protection (Transmission protocol requirement)
+SESSION_ID = uuid.uuid4().hex[:48]
+
+# Download manager state
+_downloads: dict[int, dict] = {}
+_next_id = 1
+
+
+def _check_auth(request: Request):
+    """Verify HTTP Basic Auth. Return error response if invalid."""
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Basic "):
+        try:
+            decoded = base64.b64decode(auth[6:]).decode()
+            username, password = decoded.split(":", 1)
+            # Accept any username with the correct API key as password
+            if password != settings.TORZNAB_APIKEY:
+                return JSONResponse(status_code=401, content={"result": "unauthorized"})
+        except Exception:
+            return JSONResponse(status_code=401, content={"result": "unauthorized"})
+    # Also accept requests without auth (for direct testing)
+    return None
+
+
+def _check_session(request: Request):
+    """Verify X-Transmission-Session-Id header. Return error response if invalid."""
+    client_session = request.headers.get("X-Transmission-Session-Id", "")
+    if client_session != SESSION_ID:
+        return JSONResponse(
+            status_code=409,
+            headers={"X-Transmission-Session-Id": SESSION_ID},
+            content={"result": "error"},
+        )
+    return None
+
+
+def _rpc_response(result: str, arguments: dict, tag=None):
+    resp = {"result": result, "arguments": arguments}
+    if tag is not None:
+        resp["tag"] = tag
+    return JSONResponse(
+        content=resp,
+        headers={"X-Transmission-Session-Id": SESSION_ID},
+    )
+
+
+@router.get("/transmission/rpc")
+async def transmission_rpc_get(request: Request):
+    """Handle GET requests — Sonarr uses this to verify the endpoint exists."""
+    auth_err = _check_auth(request)
+    if auth_err:
+        return auth_err
+    return JSONResponse(
+        status_code=409,
+        headers={"X-Transmission-Session-Id": SESSION_ID},
+        content={"result": "error"},
+    )
+
+
+@router.post("/transmission/rpc")
+async def transmission_rpc(request: Request):
+    # Auth check
+    auth_err = _check_auth(request)
+    if auth_err:
+        return auth_err
+
+    # CSRF check
+    err = _check_session(request)
+    if err:
+        return err
+
+    body = await request.json()
+    method = body.get("method", "")
+    arguments = body.get("arguments", {})
+    tag = body.get("tag")
+
+    handlers = {
+        "session-get": _session_get,
+        "session-stats": _session_stats,
+        "torrent-add": _torrent_add,
+        "torrent-get": _torrent_get,
+        "torrent-remove": _torrent_remove,
+        "torrent-set": _torrent_set,
+    }
+
+    handler = handlers.get(method)
+    if handler is None:
+        return _rpc_response("method not recognized", {}, tag)
+
+    result_args = await handler(arguments)
+    return _rpc_response("success", result_args, tag)
+
+
+async def _session_get(args):
+    return {
+        "version": "4.0.0 (telegram-torznab)",
+        "rpc-version": 17,
+        "rpc-version-minimum": 14,
+        "download-dir": settings.DOWNLOAD_DIR,
+        "download-dir-free-space": 50_000_000_000,
+    }
+
+
+async def _session_stats(args):
+    active = sum(1 for d in _downloads.values() if d["status"] in (3, 4))
+    return {
+        "activeTorrentCount": active,
+        "pausedTorrentCount": sum(1 for d in _downloads.values() if d["status"] == 0),
+        "torrentCount": len(_downloads),
+        "downloadSpeed": sum(d.get("rateDownload", 0) for d in _downloads.values()),
+        "uploadSpeed": 0,
+    }
+
+
+async def _torrent_add(args):
+    global _next_id
+
+    metainfo_b64 = args.get("metainfo", "")
+    download_dir = args.get("download-dir", settings.DOWNLOAD_DIR)
+
+    if not metainfo_b64:
+        return {"torrent-duplicate": None}
+
+    # Decode .torrent and extract our metadata from the comment field
+    try:
+        torrent_data = base64.b64decode(metainfo_b64)
+        torrent_dict = _bdecode(torrent_data)
+    except Exception as e:
+        logger.error("Failed to decode torrent: %s", e)
+        return {"torrent-duplicate": None}
+
+    comment = torrent_dict.get(b"comment", b"").decode()
+    info = torrent_dict.get(b"info", {})
+    name = info.get(b"name", b"unknown").decode()
+    size = info.get(b"length", 0)
+
+    if ":" not in comment:
+        logger.error("Torrent comment missing chat_id:msg_id: %s", comment)
+        return {"torrent-duplicate": None}
+
+    chat_id, msg_id_str = comment.rsplit(":", 1)
+    try:
+        msg_id = int(msg_id_str)
+    except ValueError:
+        return {"torrent-duplicate": None}
+
+    # Check for duplicate (same chat_id:msg_id already downloading)
+    for existing in _downloads.values():
+        if existing["chat_id"] == chat_id and existing["msg_id"] == msg_id:
+            return {
+                "torrent-duplicate": {
+                    "id": existing["id"],
+                    "hashString": existing["hashString"],
+                    "name": existing["name"],
+                },
+            }
+
+    torrent_id = _next_id
+    _next_id += 1
+    torrent_hash = uuid.uuid4().hex[:40]
+
+    download_info = {
+        "id": torrent_id,
+        "hashString": torrent_hash,
+        "name": name,
+        "chat_id": chat_id,
+        "msg_id": msg_id,
+        "totalSize": size,
+        "percentDone": 0.0,
+        "leftUntilDone": size,
+        "downloadedEver": 0,
+        "uploadedEver": 0,
+        "status": 4,  # TR_STATUS_DOWNLOAD
+        "rateDownload": 0,
+        "rateUpload": 0,
+        "eta": -1,
+        "error": 0,
+        "errorString": "",
+        "downloadDir": download_dir,
+        "addedDate": int(time.time()),
+        "doneDate": 0,
+        "isFinished": False,
+        "secondsDownloading": 0,
+        "secondsSeeding": 0,
+        "seedRatioLimit": 0,
+        "seedRatioMode": 0,
+        "files": [{"name": name, "length": size, "bytesCompleted": 0}],
+        "fileStats": [{"wanted": True, "priority": 0, "bytesCompleted": 0}],
+        "_start_time": time.time(),
+    }
+
+    _downloads[torrent_id] = download_info
+    logger.info("Queued download #%d: %s (%s:%d)", torrent_id, name, chat_id, msg_id)
+
+    # Start background download
+    asyncio.create_task(_download_from_telegram(torrent_id))
+
+    return {
+        "torrent-added": {
+            "id": torrent_id,
+            "hashString": torrent_hash,
+            "name": name,
+        },
+    }
+
+
+async def _download_from_telegram(torrent_id: int):
+    info = _downloads.get(torrent_id)
+    if not info:
+        return
+
+    try:
+        client = get_client()
+        entity = await client.get_entity(int(info["chat_id"]))
+        message = await client.get_messages(entity, ids=info["msg_id"])
+
+        if not message or not message.media:
+            info["error"] = 1
+            info["errorString"] = "No media in message"
+            info["status"] = 0
+            return
+
+        doc = message.media.document
+        filename = info["name"]
+        for attr in doc.attributes:
+            if hasattr(attr, "file_name"):
+                filename = attr.file_name
+                break
+
+        file_size = doc.size or 0
+        info["name"] = filename
+        info["totalSize"] = file_size
+        info["leftUntilDone"] = file_size
+        info["files"] = [{"name": filename, "length": file_size, "bytesCompleted": 0}]
+        info["fileStats"] = [{"wanted": True, "priority": 0, "bytesCompleted": 0}]
+
+        dest_path = os.path.join(info["downloadDir"], filename)
+        os.makedirs(info["downloadDir"], exist_ok=True)
+
+        # Atomic download: write to tmp, then rename
+        tmp_path = dest_path + ".tmp"
+
+        def progress_callback(received, total):
+            info["downloadedEver"] = received
+            info["leftUntilDone"] = max(0, total - received)
+            info["percentDone"] = received / total if total > 0 else 0
+            info["rateDownload"] = 1_000_000
+            info["secondsDownloading"] = int(time.time() - info["_start_time"])
+            info["files"][0]["bytesCompleted"] = received
+            info["fileStats"][0]["bytesCompleted"] = received
+            if total > 0 and received < total:
+                speed = received / max(1, info["secondsDownloading"])
+                info["eta"] = int((total - received) / speed) if speed > 0 else -1
+
+        logger.info("Downloading from Telegram: %s", filename)
+        await client.download_media(message, file=tmp_path, progress_callback=progress_callback)
+        os.rename(tmp_path, dest_path)
+
+        # Mark completed
+        info["status"] = 6  # TR_STATUS_SEED
+        info["percentDone"] = 1.0
+        info["leftUntilDone"] = 0
+        info["downloadedEver"] = file_size
+        info["doneDate"] = int(time.time())
+        info["isFinished"] = True
+        info["rateDownload"] = 0
+        info["eta"] = -1
+        info["files"][0]["bytesCompleted"] = file_size
+        info["fileStats"][0]["bytesCompleted"] = file_size
+        logger.info("Download complete: %s (%.1f MB)", filename, file_size / 1048576)
+
+    except Exception as e:
+        logger.error("Download failed for torrent #%d: %s", torrent_id, e)
+        info["error"] = 1
+        info["errorString"] = str(e)
+        info["status"] = 0
+        info["rateDownload"] = 0
+
+
+async def _torrent_get(args):
+    fields = args.get("fields", [])
+    ids = args.get("ids")
+
+    if ids is None:
+        torrents = list(_downloads.values())
+    elif isinstance(ids, list):
+        torrents = [_downloads[tid] for tid in ids if tid in _downloads]
+    elif isinstance(ids, int):
+        torrents = [_downloads[ids]] if ids in _downloads else []
+    else:
+        torrents = list(_downloads.values())
+
+    if fields:
+        # Return only requested fields (exclude internal fields starting with _)
+        result = []
+        for t in torrents:
+            filtered = {}
+            for f in fields:
+                if f in t:
+                    filtered[f] = t[f]
+            result.append(filtered)
+        return {"torrents": result}
+
+    # Return all fields except internal ones
+    return {
+        "torrents": [
+            {k: v for k, v in t.items() if not k.startswith("_")}
+            for t in torrents
+        ],
+    }
+
+
+async def _torrent_remove(args):
+    ids = args.get("ids", [])
+    delete_local_data = args.get("delete-local-data", False)
+
+    if isinstance(ids, int):
+        ids = [ids]
+
+    for tid in ids:
+        info = _downloads.pop(tid, None)
+        if info and delete_local_data:
+            path = os.path.join(info["downloadDir"], info["name"])
+            if os.path.exists(path):
+                os.remove(path)
+                logger.info("Deleted: %s", path)
+
+    return {}
+
+
+async def _torrent_set(args):
+    # Accept but ignore — Sonarr sometimes sets labels, speed limits, etc.
+    return {}
