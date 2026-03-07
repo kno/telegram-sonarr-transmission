@@ -39,6 +39,9 @@
 	const activeDownloads = $derived(
 		downloads.filter((d) => d.status === TR_STATUS.DOWNLOAD || d.status === TR_STATUS.DOWNLOAD_WAIT)
 	);
+	const stoppedDownloads = $derived(
+		downloads.filter((d) => d.status === TR_STATUS.STOPPED && !d.isFinished && d.error === 0)
+	);
 	const completedDownloads = $derived(
 		downloads.filter((d) => d.status === TR_STATUS.SEED || (d.status === TR_STATUS.STOPPED && d.isFinished))
 	);
@@ -81,6 +84,15 @@
 		<h2 class="mb-3 text-sm font-semibold uppercase text-(--color-text-muted)">Activas</h2>
 		<div class="mb-6 grid gap-3">
 			{#each activeDownloads as download (download.id)}
+				<DownloadRow {download} onRemoved={fetchDownloads} />
+			{/each}
+		</div>
+	{/if}
+
+	{#if stoppedDownloads.length > 0}
+		<h2 class="mb-3 text-sm font-semibold uppercase text-(--color-warning)">Pausadas</h2>
+		<div class="mb-6 grid gap-3">
+			{#each stoppedDownloads as download (download.id)}
 				<DownloadRow {download} onRemoved={fetchDownloads} />
 			{/each}
 		</div>

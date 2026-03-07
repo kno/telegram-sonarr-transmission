@@ -290,7 +290,6 @@ async def _download_from_telegram(torrent_id: int):
 
     info["status"] = 4  # TR_STATUS_DOWNLOAD
     _save_state()
-    _last_save = [time.time()]
 
     try:
         client = get_client()
@@ -314,35 +313,70 @@ async def _download_from_telegram(torrent_id: int):
         file_size = doc.size or 0
         info["name"] = filename
         info["totalSize"] = file_size
-        info["leftUntilDone"] = file_size
         info["files"] = [{"name": filename, "length": file_size, "bytesCompleted": 0}]
         info["fileStats"] = [{"wanted": True, "priority": 0, "bytesCompleted": 0}]
 
         dest_path = os.path.join(info["downloadDir"], filename)
         os.makedirs(info["downloadDir"], exist_ok=True)
 
-        # Atomic download: write to tmp, then rename
+        # Resume support: check for partial .tmp file
         tmp_path = dest_path + ".tmp"
+        resume_offset = 0
+        if os.path.exists(tmp_path):
+            resume_offset = os.path.getsize(tmp_path)
+            if resume_offset >= file_size:
+                # File already fully downloaded, just needs rename
+                resume_offset = 0
+                os.remove(tmp_path)
 
-        def progress_callback(received, total):
-            info["downloadedEver"] = received
-            info["leftUntilDone"] = max(0, total - received)
-            info["percentDone"] = received / total if total > 0 else 0
-            info["rateDownload"] = 1_000_000
-            info["secondsDownloading"] = int(time.time() - info["_start_time"])
-            info["files"][0]["bytesCompleted"] = received
-            info["fileStats"][0]["bytesCompleted"] = received
-            if total > 0 and received < total:
-                speed = received / max(1, info["secondsDownloading"])
-                info["eta"] = int((total - received) / speed) if speed > 0 else -1
-            # Save state periodically (every 5s)
-            now = time.time()
-            if now - _last_save[0] > 5:
-                _last_save[0] = now
-                _save_state()
+        if resume_offset > 0:
+            logger.info("Resuming download from %d/%d bytes: %s", resume_offset, file_size, filename)
+        else:
+            logger.info("Downloading from Telegram: %s", filename)
 
-        logger.info("Downloading from Telegram: %s", filename)
-        await client.download_media(message, file=tmp_path, progress_callback=progress_callback)
+        # Update progress with existing data
+        info["downloadedEver"] = resume_offset
+        info["leftUntilDone"] = max(0, file_size - resume_offset)
+        info["percentDone"] = resume_offset / file_size if file_size > 0 else 0
+        info["files"][0]["bytesCompleted"] = resume_offset
+        info["fileStats"][0]["bytesCompleted"] = resume_offset
+
+        received = resume_offset
+        last_save_time = time.time()
+        last_received = resume_offset
+        last_speed_time = time.time()
+
+        with open(tmp_path, "ab") as f:
+            async for chunk in client.iter_download(
+                doc, offset=resume_offset, file_size=file_size
+            ):
+                f.write(chunk)
+                received += len(chunk)
+                now = time.time()
+
+                info["downloadedEver"] = received
+                info["leftUntilDone"] = max(0, file_size - received)
+                info["percentDone"] = received / file_size if file_size > 0 else 0
+                info["files"][0]["bytesCompleted"] = received
+                info["fileStats"][0]["bytesCompleted"] = received
+                info["secondsDownloading"] = int(now - info["_start_time"])
+
+                # Calculate speed over ~2s window
+                elapsed_speed = now - last_speed_time
+                if elapsed_speed >= 2:
+                    info["rateDownload"] = int((received - last_received) / elapsed_speed)
+                    last_received = received
+                    last_speed_time = now
+
+                speed = info.get("rateDownload", 0)
+                remaining = file_size - received
+                info["eta"] = int(remaining / speed) if speed > 0 and remaining > 0 else -1
+
+                # Save state periodically (every 5s)
+                if now - last_save_time > 5:
+                    last_save_time = now
+                    _save_state()
+
         os.rename(tmp_path, dest_path)
 
         # Mark completed
