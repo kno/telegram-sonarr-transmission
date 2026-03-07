@@ -7,7 +7,7 @@ import os
 import time
 import uuid
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.config import settings
@@ -26,6 +26,31 @@ _next_id = 1
 _active_tasks: dict[int, asyncio.Task] = {}
 _download_queue: asyncio.Queue | None = None
 _worker_task: asyncio.Task | None = None
+
+# WebSocket clients for live progress updates
+_ws_clients: set[WebSocket] = set()
+
+
+def _get_downloads_snapshot() -> list[dict]:
+    """Return serializable snapshot of all downloads for WebSocket broadcast."""
+    return [
+        {k: v for k, v in t.items() if not k.startswith("_")}
+        for t in _downloads.values()
+    ]
+
+
+async def _broadcast_downloads():
+    """Send current download state to all connected WebSocket clients."""
+    if not _ws_clients:
+        return
+    data = json.dumps({"type": "downloads", "downloads": _get_downloads_snapshot()})
+    dead = set()
+    for ws in _ws_clients:
+        try:
+            await ws.send_text(data)
+        except Exception:
+            dead.add(ws)
+    _ws_clients.difference_update(dead)
 
 
 async def _queue_worker():
@@ -321,6 +346,7 @@ async def _torrent_add(args):
     logger.info("Queued download #%d: %s (%s:%d)", torrent_id, name, chat_id, msg_id)
 
     _enqueue_download(torrent_id)
+    await _broadcast_downloads()
 
     return {
         "torrent-added": {
@@ -393,9 +419,10 @@ async def _download_from_telegram(torrent_id: int):
         last_save_time = time.time()
         last_speed_time = time.time()
         last_speed_received = downloaded
+        last_broadcast_time = time.time()
 
         def _update_progress(total_received: int):
-            nonlocal last_save_time, last_speed_time, last_speed_received
+            nonlocal last_save_time, last_speed_time, last_speed_received, last_broadcast_time
             now = time.time()
 
             info["downloadedEver"] = total_received
@@ -418,6 +445,11 @@ async def _download_from_telegram(torrent_id: int):
             if now - last_save_time > 5:
                 last_save_time = now
                 _save_state()
+
+            # Broadcast progress via WebSocket every 1s
+            if _ws_clients and now - last_broadcast_time >= 1:
+                last_broadcast_time = now
+                asyncio.create_task(_broadcast_downloads())
 
         chunk_offset = downloaded // STREAM_CHUNK_SIZE
         logger.info(
@@ -448,6 +480,7 @@ async def _download_from_telegram(torrent_id: int):
         info["files"][0]["bytesCompleted"] = file_size
         info["fileStats"][0]["bytesCompleted"] = file_size
         logger.info("Download complete: %s (%.1f MB)", filename, file_size / 1048576)
+        await _broadcast_downloads()
 
     except asyncio.CancelledError:
         logger.info("Download #%d cancelled (paused)", torrent_id)
@@ -462,6 +495,7 @@ async def _download_from_telegram(torrent_id: int):
     finally:
         _active_tasks.pop(torrent_id, None)
         _save_state()
+        await _broadcast_downloads()
 
 
 async def _torrent_get(args):
@@ -517,6 +551,7 @@ async def _torrent_remove(args):
                 logger.info("Deleted: %s", path)
 
     _save_state()
+    await _broadcast_downloads()
     return {}
 
 
@@ -538,6 +573,7 @@ async def _torrent_stop(args):
         info["rateDownload"] = 0
 
     _save_state()
+    await _broadcast_downloads()
     return {}
 
 
@@ -563,6 +599,7 @@ async def _torrent_start(args):
         _enqueue_download(tid)
 
     _save_state()
+    await _broadcast_downloads()
     return {}
 
 
@@ -599,3 +636,26 @@ async def serve_download(torrent_id: int, request: Request, apikey: str = ""):
         filename=info["name"],
         media_type="application/octet-stream",
     )
+
+
+@router.websocket("/ws/downloads")
+async def ws_downloads(ws: WebSocket, apikey: str = ""):
+    """WebSocket endpoint for live download progress updates."""
+    if not apikey or not hmac.compare_digest(apikey, settings.TORZNAB_APIKEY):
+        await ws.close(code=4001, reason="unauthorized")
+        return
+    await ws.accept()
+    _ws_clients.add(ws)
+    try:
+        # Send initial state
+        await ws.send_text(json.dumps({
+            "type": "downloads",
+            "downloads": _get_downloads_snapshot(),
+        }))
+        # Keep connection alive, listen for close
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        _ws_clients.discard(ws)

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { settings } from '$lib/stores.svelte';
-	import { getDownloads } from '$lib/api';
+	import { getDownloads, connectDownloadsWS } from '$lib/api';
 	import { TR_STATUS } from '$lib/types';
 	import type { Download } from '$lib/types';
 	import DownloadRow from '$lib/components/DownloadRow.svelte';
@@ -27,13 +27,22 @@
 	}
 
 	onMount(() => {
-		fetchDownloads();
-	});
+		if (!settings.apiKey) return;
 
-	$effect(() => {
-		const ms = hasActive ? 2000 : 10000;
-		const interval = setInterval(fetchDownloads, ms);
-		return () => clearInterval(interval);
+		const disconnect = connectDownloadsWS(
+			settings.apiKey,
+			(updated) => {
+				downloads = updated;
+				loading = false;
+				error = '';
+			},
+			() => {
+				// On WebSocket error, fall back to a single fetch
+				fetchDownloads();
+			}
+		);
+
+		return disconnect;
 	});
 
 	const activeDownloads = $derived(

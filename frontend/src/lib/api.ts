@@ -231,6 +231,61 @@ export async function testConnection(): Promise<boolean> {
 	}
 }
 
+// --- WebSocket for live download progress ---
+
+export function connectDownloadsWS(
+	apiKey: string,
+	onMessage: (downloads: Download[]) => void,
+	onError?: () => void
+): () => void {
+	const base = getBaseUrl();
+	const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+	const wsBase = base
+		? base.replace(/^https?:/, wsProto)
+		: `${wsProto}//${window.location.host}`;
+	const url = `${wsBase}/ws/downloads?apikey=${encodeURIComponent(apiKey)}`;
+
+	let ws: WebSocket | null = null;
+	let closed = false;
+	let reconnectTimer: ReturnType<typeof setTimeout>;
+
+	function connect() {
+		if (closed) return;
+		ws = new WebSocket(url);
+
+		ws.onmessage = (event) => {
+			try {
+				const data = JSON.parse(event.data);
+				if (data.type === 'downloads') {
+					onMessage(data.downloads);
+				}
+			} catch {
+				// ignore malformed messages
+			}
+		};
+
+		ws.onclose = () => {
+			if (!closed) {
+				reconnectTimer = setTimeout(connect, 3000);
+			}
+		};
+
+		ws.onerror = () => {
+			onError?.();
+			ws?.close();
+		};
+	}
+
+	connect();
+
+	// Return cleanup function
+	return () => {
+		closed = true;
+		clearTimeout(reconnectTimer);
+		ws?.close();
+	};
+}
+
 // --- Utilities ---
 
 export function formatSize(bytes: number): string {
