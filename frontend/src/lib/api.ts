@@ -202,6 +202,14 @@ export async function removeDownload(
 	});
 }
 
+export async function pauseDownload(apiKey: string, id: number): Promise<void> {
+	await rpcCall(apiKey, 'torrent-stop', { ids: [id] });
+}
+
+export async function resumeDownload(apiKey: string, id: number): Promise<void> {
+	await rpcCall(apiKey, 'torrent-start', { ids: [id] });
+}
+
 export async function getSessionStats(apiKey: string): Promise<SessionStats> {
 	return rpcCall(apiKey, 'session-stats');
 }
