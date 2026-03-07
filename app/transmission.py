@@ -284,6 +284,9 @@ async def _torrent_add(args):
     }
 
 
+PARALLEL_WORKERS = 4
+
+
 async def _download_from_telegram(torrent_id: int):
     info = _downloads.get(torrent_id)
     if not info:
@@ -319,66 +322,94 @@ async def _download_from_telegram(torrent_id: int):
 
         dest_path = os.path.join(info["downloadDir"], filename)
         os.makedirs(info["downloadDir"], exist_ok=True)
-
-        # Resume support: check for partial .tmp file
         tmp_path = dest_path + ".tmp"
-        resume_offset = 0
-        if os.path.exists(tmp_path):
-            resume_offset = os.path.getsize(tmp_path)
-            if resume_offset >= file_size:
-                # File already fully downloaded, just needs rename
-                resume_offset = 0
-                os.remove(tmp_path)
 
-        if resume_offset > 0:
-            logger.info("Resuming download from %d/%d bytes: %s", resume_offset, file_size, filename)
+        # Determine worker count (at least 1MB per worker)
+        num_workers = min(PARALLEL_WORKERS, max(1, file_size // (1024 * 1024)))
+
+        # Resume: try to reuse existing segments
+        segments = info.get("segments")
+        if segments and len(segments) == num_workers and os.path.exists(tmp_path):
+            total_done = sum(s["downloaded"] for s in segments)
+            logger.info(
+                "Resuming download with %d workers: %d/%d bytes: %s",
+                num_workers, total_done, file_size, filename,
+            )
         else:
-            logger.info("Downloading from Telegram: %s", filename)
+            # Create fresh segments
+            seg_size = file_size // num_workers
+            segments = []
+            for i in range(num_workers):
+                start = i * seg_size
+                end = (i + 1) * seg_size if i < num_workers - 1 else file_size
+                segments.append({"start": start, "end": end, "downloaded": 0})
+            info["segments"] = segments
+            # Pre-allocate file
+            with open(tmp_path, "wb") as f:
+                f.truncate(file_size)
+            logger.info("Downloading %s with %d parallel workers", filename, num_workers)
 
-        # Update progress with existing data
-        info["downloadedEver"] = resume_offset
-        info["leftUntilDone"] = max(0, file_size - resume_offset)
-        info["percentDone"] = resume_offset / file_size if file_size > 0 else 0
-        info["files"][0]["bytesCompleted"] = resume_offset
-        info["fileStats"][0]["bytesCompleted"] = resume_offset
+        # Progress tracking
+        total_received = sum(s["downloaded"] for s in segments)
+        info["downloadedEver"] = total_received
+        info["leftUntilDone"] = max(0, file_size - total_received)
+        info["percentDone"] = total_received / file_size if file_size > 0 else 0
+        info["files"][0]["bytesCompleted"] = total_received
+        info["fileStats"][0]["bytesCompleted"] = total_received
 
-        received = resume_offset
+        progress_lock = asyncio.Lock()
         last_save_time = time.time()
-        last_received = resume_offset
         last_speed_time = time.time()
+        last_speed_received = total_received
 
-        with open(tmp_path, "ab") as f:
-            async for chunk in client.iter_download(
-                doc, offset=resume_offset, file_size=file_size
-            ):
-                f.write(chunk)
-                received += len(chunk)
-                now = time.time()
+        async def _update_progress(chunk_len: int):
+            nonlocal total_received, last_save_time, last_speed_time, last_speed_received
+            total_received += chunk_len
+            now = time.time()
 
-                info["downloadedEver"] = received
-                info["leftUntilDone"] = max(0, file_size - received)
-                info["percentDone"] = received / file_size if file_size > 0 else 0
-                info["files"][0]["bytesCompleted"] = received
-                info["fileStats"][0]["bytesCompleted"] = received
-                info["secondsDownloading"] = int(now - info["_start_time"])
+            info["downloadedEver"] = total_received
+            info["leftUntilDone"] = max(0, file_size - total_received)
+            info["percentDone"] = total_received / file_size if file_size > 0 else 0
+            info["files"][0]["bytesCompleted"] = total_received
+            info["fileStats"][0]["bytesCompleted"] = total_received
+            info["secondsDownloading"] = int(now - info["_start_time"])
 
-                # Calculate speed over ~2s window
-                elapsed_speed = now - last_speed_time
-                if elapsed_speed >= 2:
-                    info["rateDownload"] = int((received - last_received) / elapsed_speed)
-                    last_received = received
-                    last_speed_time = now
+            elapsed = now - last_speed_time
+            if elapsed >= 2:
+                info["rateDownload"] = int((total_received - last_speed_received) / elapsed)
+                last_speed_received = total_received
+                last_speed_time = now
 
-                speed = info.get("rateDownload", 0)
-                remaining = file_size - received
-                info["eta"] = int(remaining / speed) if speed > 0 and remaining > 0 else -1
+            speed = info.get("rateDownload", 0)
+            remaining = file_size - total_received
+            info["eta"] = int(remaining / speed) if speed > 0 and remaining > 0 else -1
 
-                # Save state periodically (every 5s)
-                if now - last_save_time > 5:
-                    last_save_time = now
-                    _save_state()
+            if now - last_save_time > 5:
+                last_save_time = now
+                _save_state()
+
+        async def _download_segment(seg_idx: int):
+            seg = segments[seg_idx]
+            offset = seg["start"] + seg["downloaded"]
+            remaining = seg["end"] - offset
+            if remaining <= 0:
+                return
+
+            with open(tmp_path, "r+b") as f:
+                f.seek(offset)
+                async for chunk in client.iter_download(
+                    doc, offset=offset, limit=remaining,
+                    request_size=524288, file_size=file_size,
+                ):
+                    f.write(chunk)
+                    seg["downloaded"] += len(chunk)
+                    async with progress_lock:
+                        await _update_progress(len(chunk))
+
+        await asyncio.gather(*[_download_segment(i) for i in range(num_workers)])
 
         os.rename(tmp_path, dest_path)
+        info.pop("segments", None)
 
         # Mark completed
         info["status"] = 6  # TR_STATUS_SEED
