@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hmac
 import json
 import logging
 import os
@@ -7,7 +8,7 @@ import time
 import uuid
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from app.config import settings
 from app.download import _bdecode
@@ -515,3 +516,33 @@ async def _torrent_start(args):
 async def _torrent_set(args):
     # Accept but ignore — Sonarr sometimes sets labels, speed limits, etc.
     return {}
+
+
+@router.get("/transmission/files/{torrent_id}")
+async def serve_download(torrent_id: int, request: Request, apikey: str = ""):
+    """Serve a completed download file to the browser."""
+    # Accept apikey as query param (for browser downloads) or Basic Auth header
+    if apikey:
+        if not hmac.compare_digest(apikey, settings.TORZNAB_APIKEY):
+            return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    else:
+        auth_err = _check_auth(request)
+        if auth_err:
+            return auth_err
+
+    info = _downloads.get(torrent_id)
+    if not info:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    if not info.get("isFinished", False):
+        return JSONResponse(status_code=400, content={"error": "download not complete"})
+
+    file_path = os.path.join(info["downloadDir"], info["name"])
+    if not os.path.exists(file_path):
+        return JSONResponse(status_code=404, content={"error": "file not found on disk"})
+
+    return FileResponse(
+        path=file_path,
+        filename=info["name"],
+        media_type="application/octet-stream",
+    )

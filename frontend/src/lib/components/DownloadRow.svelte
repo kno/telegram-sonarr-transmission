@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Download } from '$lib/types';
 	import { TR_STATUS } from '$lib/types';
-	import { formatSize, formatSpeed, formatEta, removeDownload, pauseDownload, resumeDownload } from '$lib/api';
+	import { formatSize, formatSpeed, formatEta, removeDownload, pauseDownload, resumeDownload, getFileUrl } from '$lib/api';
 	import { settings } from '$lib/stores.svelte';
 	import ProgressBar from './ProgressBar.svelte';
 
@@ -38,6 +38,7 @@
 	});
 
 	const isActive = $derived(download.status === TR_STATUS.DOWNLOAD);
+	const isCompleted = $derived(download.isFinished || download.status === TR_STATUS.SEED);
 	const canPause = $derived(
 		download.status === TR_STATUS.DOWNLOAD || download.status === TR_STATUS.DOWNLOAD_WAIT
 	);
@@ -117,6 +118,18 @@
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
 						</svg>
 					</button>
+				{/if}
+				{#if isCompleted}
+					<a
+						href={getFileUrl(settings.apiKey, download.id)}
+						download
+						class="rounded-md p-1.5 text-(--color-text-muted) transition-colors hover:bg-(--color-surface-hover) hover:text-(--color-primary)"
+						title="Descargar archivo"
+					>
+						<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+						</svg>
+					</a>
 				{/if}
 				<button
 					onclick={() => (showConfirm = true)}

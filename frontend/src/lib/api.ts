@@ -210,6 +210,11 @@ export async function resumeDownload(apiKey: string, id: number): Promise<void> 
 	await rpcCall(apiKey, 'torrent-start', { ids: [id] });
 }
 
+export function getFileUrl(apiKey: string, torrentId: number): string {
+	const base = getBaseUrl();
+	return `${base}/transmission/files/${torrentId}?apikey=${encodeURIComponent(apiKey)}`;
+}
+
 export async function getSessionStats(apiKey: string): Promise<SessionStats> {
 	return rpcCall(apiKey, 'session-stats');
 }
