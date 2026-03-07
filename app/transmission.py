@@ -24,6 +24,57 @@ SESSION_ID = uuid.uuid4().hex[:48]
 _downloads: dict[int, dict] = {}
 _next_id = 1
 _active_tasks: dict[int, asyncio.Task] = {}
+_download_queue: asyncio.Queue | None = None
+_worker_task: asyncio.Task | None = None
+
+
+async def _queue_worker():
+    """Process downloads one at a time from the queue."""
+    while True:
+        torrent_id = await _download_queue.get()
+        info = _downloads.get(torrent_id)
+        if not info or info.get("isFinished") or info.get("status") == 0:
+            _download_queue.task_done()
+            continue
+
+        info["status"] = 4  # TR_STATUS_DOWNLOAD
+        info["_start_time"] = time.time()
+        _save_state()
+
+        task = asyncio.create_task(_download_from_telegram(torrent_id))
+        _active_tasks[torrent_id] = task
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # The download task was cancelled (paused), but the worker continues
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+        except Exception:
+            pass
+        _download_queue.task_done()
+
+
+def _ensure_queue():
+    """Initialize the download queue and worker if not already running."""
+    global _download_queue, _worker_task
+    if _download_queue is None:
+        _download_queue = asyncio.Queue()
+    if _worker_task is None or _worker_task.done():
+        _worker_task = asyncio.create_task(_queue_worker())
+
+
+def _enqueue_download(torrent_id: int):
+    """Add a download to the queue."""
+    _ensure_queue()
+    info = _downloads.get(torrent_id)
+    if info:
+        info["status"] = 3  # TR_STATUS_CHECK_WAIT (queued)
+        _save_state()
+    _download_queue.put_nowait(torrent_id)
 
 # --- Persistence ---
 
@@ -74,11 +125,9 @@ async def resume_downloads():
         status = info.get("status", 0)
         # Resume downloads that were active (downloading or queued)
         if status in (3, 4) and not info.get("isFinished", False):
-            info["_start_time"] = time.time()
             info["rateDownload"] = 0
             logger.info("Resuming download #%d: %s", tid, info.get("name", "?"))
-            task = asyncio.create_task(_download_from_telegram(tid))
-            _active_tasks[tid] = task
+            _enqueue_download(tid)
 
 
 def _check_auth(request: Request):
@@ -271,9 +320,7 @@ async def _torrent_add(args):
     _save_state()
     logger.info("Queued download #%d: %s (%s:%d)", torrent_id, name, chat_id, msg_id)
 
-    # Start background download
-    task = asyncio.create_task(_download_from_telegram(torrent_id))
-    _active_tasks[torrent_id] = task
+    _enqueue_download(torrent_id)
 
     return {
         "torrent-added": {
@@ -291,9 +338,6 @@ async def _download_from_telegram(torrent_id: int):
     info = _downloads.get(torrent_id)
     if not info:
         return
-
-    info["status"] = 4  # TR_STATUS_DOWNLOAD
-    _save_state()
 
     try:
         client = get_client()
@@ -322,12 +366,11 @@ async def _download_from_telegram(torrent_id: int):
         # Resume support: check existing .tmp file size
         downloaded = 0
         if os.path.exists(tmp_path):
-            downloaded = os.path.getsize(tmp_path)
+            tmp_size = os.path.getsize(tmp_path)
             # Align to chunk boundary (stream_media works in 1MB chunks)
-            downloaded = (downloaded // STREAM_CHUNK_SIZE) * STREAM_CHUNK_SIZE
-            if downloaded >= file_size:
-                downloaded = 0  # Corrupted, restart
-            if downloaded > 0:
+            aligned = (tmp_size // STREAM_CHUNK_SIZE) * STREAM_CHUNK_SIZE
+            if aligned > 0 and aligned < file_size:
+                downloaded = aligned
                 # Truncate to aligned boundary in case last chunk was partial
                 with open(tmp_path, "r+b") as f:
                     f.truncate(downloaded)
@@ -335,6 +378,10 @@ async def _download_from_telegram(torrent_id: int):
                     "Resuming download at %.1f MB / %.1f MB: %s",
                     downloaded / 1048576, file_size / 1048576, filename,
                 )
+            else:
+                # File is empty, corrupted, or oversized — start fresh
+                os.remove(tmp_path)
+                logger.info("Removed stale .tmp, starting fresh: %s", filename)
 
         info["downloadedEver"] = downloaded
         info["leftUntilDone"] = max(0, file_size - downloaded)
@@ -378,7 +425,10 @@ async def _download_from_telegram(torrent_id: int):
             filename, file_size / 1048576, chunk_offset,
         )
 
-        with open(tmp_path, "ab") as f:
+        open_mode = "r+b" if downloaded > 0 else "wb"
+        with open(tmp_path, open_mode) as f:
+            if downloaded > 0:
+                f.seek(downloaded)
             async for chunk in client.stream_media(message, offset=chunk_offset):
                 f.write(chunk)
                 downloaded += len(chunk)
@@ -506,14 +556,11 @@ async def _torrent_start(args):
             continue
         if tid in _active_tasks and not _active_tasks[tid].done():
             continue  # Already running
-        info["status"] = 4  # TR_STATUS_DOWNLOAD
         info["error"] = 0
         info["errorString"] = ""
-        info["_start_time"] = time.time()
         info["rateDownload"] = 0
         logger.info("Resuming download #%d: %s", tid, info.get("name", "?"))
-        task = asyncio.create_task(_download_from_telegram(tid))
-        _active_tasks[tid] = task
+        _enqueue_download(tid)
 
     _save_state()
     return {}
