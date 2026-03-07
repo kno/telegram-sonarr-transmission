@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import logging
 import os
 import time
@@ -21,6 +22,62 @@ SESSION_ID = uuid.uuid4().hex[:48]
 # Download manager state
 _downloads: dict[int, dict] = {}
 _next_id = 1
+_active_tasks: dict[int, asyncio.Task] = {}
+
+# --- Persistence ---
+
+def _state_file() -> str:
+    return os.path.join(settings.SESSION_DIR, "downloads.json")
+
+
+def _save_state():
+    """Persist download state to disk."""
+    serializable = {}
+    for tid, info in _downloads.items():
+        entry = {k: v for k, v in info.items() if not k.startswith("_")}
+        serializable[str(tid)] = entry
+    try:
+        path = _state_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path + ".tmp", "w") as f:
+            json.dump(serializable, f)
+        os.replace(path + ".tmp", path)
+    except Exception as e:
+        logger.error("Failed to save download state: %s", e)
+
+
+def _load_state():
+    """Restore download state from disk."""
+    global _next_id
+    path = _state_file()
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        for tid_str, info in data.items():
+            tid = int(tid_str)
+            info["id"] = tid
+            _downloads[tid] = info
+            if tid >= _next_id:
+                _next_id = tid + 1
+        logger.info("Restored %d download(s) from state file", len(_downloads))
+    except Exception as e:
+        logger.error("Failed to load download state: %s", e)
+
+
+async def resume_downloads():
+    """Resume incomplete downloads after server restart."""
+    _load_state()
+    for tid, info in list(_downloads.items()):
+        status = info.get("status", 0)
+        # Resume downloads that were active (downloading or queued)
+        if status in (3, 4) and not info.get("isFinished", False):
+            info["_start_time"] = time.time()
+            info["rateDownload"] = 0
+            logger.info("Resuming download #%d: %s", tid, info.get("name", "?"))
+            task = asyncio.create_task(_download_from_telegram(tid))
+            _active_tasks[tid] = task
 
 
 def _check_auth(request: Request):
@@ -98,6 +155,8 @@ async def transmission_rpc(request: Request):
         "torrent-get": _torrent_get,
         "torrent-remove": _torrent_remove,
         "torrent-set": _torrent_set,
+        "torrent-start": _torrent_start,
+        "torrent-stop": _torrent_stop,
     }
 
     handler = handlers.get(method)
@@ -208,10 +267,12 @@ async def _torrent_add(args):
     }
 
     _downloads[torrent_id] = download_info
+    _save_state()
     logger.info("Queued download #%d: %s (%s:%d)", torrent_id, name, chat_id, msg_id)
 
     # Start background download
-    asyncio.create_task(_download_from_telegram(torrent_id))
+    task = asyncio.create_task(_download_from_telegram(torrent_id))
+    _active_tasks[torrent_id] = task
 
     return {
         "torrent-added": {
@@ -227,6 +288,10 @@ async def _download_from_telegram(torrent_id: int):
     if not info:
         return
 
+    info["status"] = 4  # TR_STATUS_DOWNLOAD
+    _save_state()
+    _last_save = [time.time()]
+
     try:
         client = get_client()
         entity = await client.get_entity(int(info["chat_id"]))
@@ -236,6 +301,7 @@ async def _download_from_telegram(torrent_id: int):
             info["error"] = 1
             info["errorString"] = "No media in message"
             info["status"] = 0
+            _save_state()
             return
 
         doc = message.media.document
@@ -269,6 +335,11 @@ async def _download_from_telegram(torrent_id: int):
             if total > 0 and received < total:
                 speed = received / max(1, info["secondsDownloading"])
                 info["eta"] = int((total - received) / speed) if speed > 0 else -1
+            # Save state periodically (every 5s)
+            now = time.time()
+            if now - _last_save[0] > 5:
+                _last_save[0] = now
+                _save_state()
 
         logger.info("Downloading from Telegram: %s", filename)
         await client.download_media(message, file=tmp_path, progress_callback=progress_callback)
@@ -287,12 +358,19 @@ async def _download_from_telegram(torrent_id: int):
         info["fileStats"][0]["bytesCompleted"] = file_size
         logger.info("Download complete: %s (%.1f MB)", filename, file_size / 1048576)
 
+    except asyncio.CancelledError:
+        logger.info("Download #%d cancelled (paused)", torrent_id)
+        info["status"] = 0  # TR_STATUS_STOPPED
+        info["rateDownload"] = 0
     except Exception as e:
         logger.error("Download failed for torrent #%d: %s", torrent_id, e)
         info["error"] = 1
         info["errorString"] = str(e)
         info["status"] = 0
         info["rateDownload"] = 0
+    finally:
+        _active_tasks.pop(torrent_id, None)
+        _save_state()
 
 
 async def _torrent_get(args):
@@ -336,6 +414,10 @@ async def _torrent_remove(args):
         ids = [ids]
 
     for tid in ids:
+        # Cancel active download task
+        task = _active_tasks.pop(tid, None)
+        if task and not task.done():
+            task.cancel()
         info = _downloads.pop(tid, None)
         if info and delete_local_data:
             path = os.path.join(info["downloadDir"], info["name"])
@@ -343,6 +425,56 @@ async def _torrent_remove(args):
                 os.remove(path)
                 logger.info("Deleted: %s", path)
 
+    _save_state()
+    return {}
+
+
+async def _torrent_stop(args):
+    """Pause downloads."""
+    ids = args.get("ids", [])
+    if isinstance(ids, int):
+        ids = [ids]
+
+    for tid in ids:
+        info = _downloads.get(tid)
+        if not info:
+            continue
+        # Cancel active download task
+        task = _active_tasks.pop(tid, None)
+        if task and not task.done():
+            task.cancel()
+        info["status"] = 0  # TR_STATUS_STOPPED
+        info["rateDownload"] = 0
+
+    _save_state()
+    return {}
+
+
+async def _torrent_start(args):
+    """Resume stopped downloads."""
+    ids = args.get("ids", [])
+    if isinstance(ids, int):
+        ids = [ids]
+
+    for tid in ids:
+        info = _downloads.get(tid)
+        if not info:
+            continue
+        # Only resume if stopped and not finished
+        if info.get("isFinished", False):
+            continue
+        if tid in _active_tasks and not _active_tasks[tid].done():
+            continue  # Already running
+        info["status"] = 4  # TR_STATUS_DOWNLOAD
+        info["error"] = 0
+        info["errorString"] = ""
+        info["_start_time"] = time.time()
+        info["rateDownload"] = 0
+        logger.info("Resuming download #%d: %s", tid, info.get("name", "?"))
+        task = asyncio.create_task(_download_from_telegram(tid))
+        _active_tasks[tid] = task
+
+    _save_state()
     return {}
 
 

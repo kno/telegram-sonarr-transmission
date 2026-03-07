@@ -10,7 +10,7 @@ from app.telegram_client import connect_client, disconnect_client
 from app.torznab.router import router as torznab_router
 from app.download import router as download_router
 from app.stream import router as stream_router
-from app.transmission import router as transmission_router
+from app.transmission import router as transmission_router, resume_downloads
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,6 +24,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Telegram Torznab server...")
     await connect_client()
     await init_channels()
+    await resume_downloads()
     logger.info("Server ready.")
     yield
     logger.info("Shutting down...")
