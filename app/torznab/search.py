@@ -108,10 +108,17 @@ def _filter_by_season_ep(items: list[dict], season: str | None, ep: str | None) 
 _search_semaphore = asyncio.Semaphore(3)
 
 
-async def _search_channel_throttled(chat_id: str, query: str, limit: int) -> list[dict]:
-    """Search with concurrency limit to avoid Telegram flood waits."""
+async def _search_channel_throttled(chat_id: str, queries: list[str], limit: int) -> list[dict]:
+    """Search with concurrency limit, trying progressively shorter queries."""
     async with _search_semaphore:
-        return await _search_channel(chat_id, query, limit)
+        for q in queries:
+            logger.info("Searching channel %s with query: %r", chat_id, q)
+            results = await _search_channel(chat_id, q, limit)
+            if results:
+                logger.info("Channel %s: %d results for %r", chat_id, len(results), q)
+                return results
+        logger.info("Channel %s: no results for any query", chat_id)
+        return []
 
 
 async def do_search(
@@ -141,28 +148,33 @@ async def do_search(
     else:
         channels = get_all_channels()
 
+    logger.info("Search: cat=%s → %d channel(s) resolved", cat, len(channels))
     if not channels:
         return _build_rss_response([], 0, offset)
 
-    # Telegram search is phrase-based, so long multi-word queries often fail
-    # when channels use translated/abbreviated names. Use the first significant
-    # word (typically the main title) for broader matching.
+    # Build a list of progressively shorter queries to try.
+    # Telegram search is phrase-based, so the full query may not match if
+    # channels use different naming. We try full → shorter → single word.
     # Season/episode filtering is done post-search on filenames.
     raw_query = query or ""
     words = raw_query.split()
-    # Use first word if query has 3+ words (likely a full title); otherwise use as-is
-    search_query = words[0] if len(words) >= 3 and words[0] else raw_query
+    search_queries: list[str] = []
+    if words:
+        for i in range(len(words), 0, -1):
+            search_queries.append(" ".join(words[:i]))
+    else:
+        search_queries = [raw_query]
 
     # Without a query, limit to first 5 channels to avoid flood waits
     # (Sonarr test sends t=tvsearch without q)
-    if not search_query:
+    if not raw_query:
         channels = channels[:5]
 
     per_channel = max(limit // len(channels), 10) if channels else limit
 
     # Search channels with throttling to avoid Telegram flood waits
     tasks = [
-        _search_channel_throttled(ch["chat_id"], search_query, per_channel)
+        _search_channel_throttled(ch["chat_id"], search_queries, per_channel)
         for ch in channels
     ]
     results = await asyncio.gather(*tasks)

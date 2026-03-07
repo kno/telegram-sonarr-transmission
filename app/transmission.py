@@ -134,6 +134,7 @@ async def _torrent_add(args):
 
     metainfo_b64 = args.get("metainfo", "")
     download_dir = args.get("download-dir", settings.DOWNLOAD_DIR)
+    logger.info("torrent-add args: download-dir=%r", download_dir)
 
     if not metainfo_b64:
         return {"torrent-duplicate": None}

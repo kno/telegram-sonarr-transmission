@@ -11,6 +11,7 @@ services:
       USER_CHANNELS_FILE: ${USER_CHANNELS_FILE:-}
     volumes:
       - ./data:/data
+      - /mnt/ext2/Downloads:/data/cache
       - ${USER_CHANNELS_MOUNT:-/dev/null}:/data/user_channels.json:ro
     restart: unless-stopped
 
