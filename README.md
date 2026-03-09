@@ -140,6 +140,41 @@ Supports `cat` (comma-separated category IDs), `offset`, and `limit` parameters.
 
 Uses Transmission's CSRF protection protocol (`X-Transmission-Session-Id` header).
 
+## Web UI
+
+The project includes a built-in web interface for managing searches, downloads, and channels directly from the browser — no Sonarr/Radarr required for basic use.
+
+Access it at `http://<server-ip>:9117/` once the server is running.
+
+### Pages
+
+- **Dashboard** (`/`) — Overview with download stats, active transfer count, download speed, and quick actions.
+- **Search** (`/search`) — Search across Telegram channels with filters for season/episode and channel selection. Results can be sent to download directly.
+- **Downloads** (`/downloads`) — Real-time download manager with live progress via WebSocket. Supports pause, resume, and delete actions.
+- **Channels** (`/channels`) — Enable/disable Telegram channels for search. Filter by name, bulk select/deselect.
+- **Settings** (`/settings`) — Configure API key and backend URL. Includes a connection test button.
+
+### Features
+
+- Dark/light theme with system preference detection
+- Responsive design with mobile support
+- Real-time download progress via WebSocket (`/ws/downloads`)
+- Spanish-language UI
+- No server-side rendering required — static SPA served by FastAPI
+
+### Frontend Development
+
+The frontend is a SvelteKit 2 app with Svelte 5, Tailwind CSS 4, and TypeScript.
+
+```bash
+cd frontend
+npm install
+npm run dev     # Dev server with HMR (proxies API to :9117)
+npm run build   # Build static files to frontend/build/
+```
+
+The production build is served by FastAPI from `frontend/build/`. No Node.js is needed at runtime.
+
 ## Development
 
 ### Run locally (without Docker)
@@ -167,6 +202,15 @@ app/
     search.py          # Search logic across Telegram channels
     caps.py            # Torznab capabilities XML
     errors.py          # Torznab error responses
+frontend/
+  src/
+    lib/
+      api.ts           # Backend API calls (Torznab, Transmission RPC, WebSocket)
+      stores.svelte.ts # Reactive state (settings, channels, theme)
+      types.ts         # TypeScript interfaces
+      components/      # Navbar, SearchResultCard, DownloadRow, ProgressBar, ThemeToggle
+    routes/            # SvelteKit file-based routing (/, /search, /downloads, /channels, /settings)
+  build/               # Pre-built static output served by FastAPI
 scripts/
   auth.py              # Interactive Telegram authentication
 ```

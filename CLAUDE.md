@@ -38,6 +38,8 @@ The app is a single FastAPI service (`app/main:app`) with four routers:
 
 Sonarr search → Torznab `/api?t=search` → searches Telegram channels → returns XML with download URLs → Sonarr grabs `.torrent` via `/api/download` → sends to fake Transmission RPC → extracts `chat_id:msg_id` from torrent comment → downloads file from Telegram → reports completion to Sonarr.
 
+5. **Web UI** (`frontend/`) — SvelteKit 2 SPA (Svelte 5 + Tailwind CSS 4 + TypeScript) built to static files and served by FastAPI from `frontend/build/`. Provides dashboard, search, downloads (with live WebSocket progress), channel management, and settings pages. All UI text is in Spanish.
+
 ### Shared state
 
 - `app/telegram_client.py` — singleton Telethon client, connected at startup
@@ -48,6 +50,17 @@ Sonarr search → Torznab `/api?t=search` → searches Telegram channels → ret
 ## Configuration
 
 All config via environment variables (see `.env.example`). Key vars: `API_ID`, `API_HASH`, `PHONE`, `TORZNAB_APIKEY`, `BASE_URL`. Config loaded via `pydantic-settings` in `app/config.py`.
+
+## Frontend
+
+- **Stack:** SvelteKit 2, Svelte 5 (runes), Tailwind CSS 4, TypeScript, Vite 6
+- **Adapter:** `adapter-static` — outputs to `frontend/build/`, served by FastAPI at `/`
+- **State:** Svelte 5 reactive stores in `frontend/src/lib/stores.svelte.ts` (settings, channels, theme). Persisted to localStorage.
+- **API layer:** `frontend/src/lib/api.ts` — all backend calls (Torznab XML parsing via `fast-xml-parser`, Transmission RPC, WebSocket at `/ws/downloads`)
+- **Routes:** `/` (dashboard), `/search`, `/downloads`, `/channels`, `/settings`
+- **Components:** `frontend/src/lib/components/` — Navbar, SearchResultCard, DownloadRow, ProgressBar, ThemeToggle
+- **Dev proxy:** Vite proxies `/api` and `/transmission` to `localhost:9117`
+- **Build:** `cd frontend && npm run build` (no Node.js needed at runtime)
 
 ## Conventions
 
