@@ -186,17 +186,34 @@ uvicorn app.main:app --host 0.0.0.0 --port 9117 --reload
 
 Requires a valid `.env` file and an existing session file in the configured `SESSION_DIR`.
 
+### Testing
+
+```bash
+pip install -r requirements-dev.txt
+python3 -m pytest                                       # Run all tests
+python3 -m pytest --cov=app --cov-report=term-missing   # With coverage
+```
+
+196 tests covering all backend modules (92% coverage). Tests use mocked Telegram API — no real connection needed.
+
+A pre-commit hook runs tests automatically before each commit.
+
 ### Project Structure
 
 ```
 app/
   main.py              # FastAPI app, lifespan (connects Telegram on startup)
   config.py            # pydantic-settings configuration
-  telegram_client.py   # Singleton Telethon client
+  telegram_client.py   # Singleton Pyrogram client
   channels.py          # Channel registry (auto-discovery, JSON persistence)
   download.py          # /api/download — synthetic .torrent generation
   stream.py            # /api/stream — file serving with Range support
-  transmission.py      # /transmission/rpc — Transmission RPC emulator
+  transmission/
+    router.py          # /transmission/rpc endpoint + WebSocket + file serving
+    handlers.py        # RPC method handlers (torrent-add, torrent-get, etc.)
+    state.py           # Download state management (in-memory + JSON persistence)
+    downloader.py      # Telegram download worker with resume support
+    websocket.py       # WebSocket broadcast for live progress
   torznab/
     router.py          # /api endpoint (Torznab protocol)
     search.py          # Search logic across Telegram channels
@@ -211,13 +228,21 @@ frontend/
       components/      # Navbar, SearchResultCard, DownloadRow, ProgressBar, ThemeToggle
     routes/            # SvelteKit file-based routing (/, /search, /downloads, /channels, /settings)
   build/               # Pre-built static output served by FastAPI
+tests/                 # pytest test suite (196 tests, 92% coverage)
+  conftest.py          # Shared fixtures (mock client, test settings, async_client)
+  test_config.py       # Config/settings tests
+  test_download.py     # Bencode/bdecode + torrent generation tests
+  test_stream.py       # Stream endpoint tests
+  test_channels.py     # Channel registry tests
+  torznab/             # Torznab module tests (errors, caps, search, router)
+  transmission/        # Transmission module tests (state, handlers, router, downloader, websocket)
 scripts/
   auth.py              # Interactive Telegram authentication
 ```
 
 ## Notes
 
-- Download state is kept in memory and **not persisted** across server restarts. Active downloads will be lost if the server is restarted.
+- Download state is persisted to `downloads.json` and resumes automatically after server restarts.
 - Telegram API has rate limits. Searches are throttled to 3 concurrent channel queries to avoid flood waits.
 - Downloaded files are cached on disk (`DOWNLOAD_DIR`). The cache is not automatically cleaned — manage disk space manually.
 - The `.torrent` files are synthetic and cannot be used with real BitTorrent clients.

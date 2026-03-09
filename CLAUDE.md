@@ -20,7 +20,30 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 9117 --reload
 ```
 
-No test suite exists yet. No linter is configured.
+## Testing
+
+```bash
+# Run all tests
+python3 -m pytest
+
+# With coverage report
+python3 -m pytest --cov=app --cov-report=term-missing
+
+# Run specific module tests
+python3 -m pytest tests/test_download.py -v
+python3 -m pytest tests/torznab/ -v
+python3 -m pytest tests/transmission/ -v
+```
+
+- 196 tests across 16 files, 92% overall coverage
+- Uses `pytest` + `pytest-asyncio` + `httpx` (AsyncClient for FastAPI)
+- All Telegram API calls mocked via `AsyncMock` (no real connection needed)
+- Filesystem tests use pytest `tmp_path` fixture
+- Shared fixtures in `tests/conftest.py`: `test_settings`, `mock_telegram_client`, `mock_message`, `populated_channels`, `clean_downloads`, `test_app`, `async_client`
+- Pre-commit hook runs tests before every commit
+- Dev dependencies: `pip install -r requirements-dev.txt`
+
+No linter is configured.
 
 ## Architecture
 
@@ -32,7 +55,7 @@ The app is a single FastAPI service (`app/main:app`) with four routers:
 
 3. **Stream** (`app/stream.py`) — `/api/stream` serves the actual file content with Range request support. Downloads from Telegram on first request, then serves from disk cache.
 
-4. **Transmission RPC** (`app/transmission.py`) — `/transmission/rpc` emulates Transmission's JSON-RPC. When Sonarr sends a "torrent-add", it decodes the synthetic `.torrent`, extracts `chat_id:msg_id` from the comment, and downloads the file from Telegram in a background task. Reports download progress back to Sonarr via torrent-get.
+4. **Transmission RPC** (`app/transmission/`) — `/transmission/rpc` emulates Transmission's JSON-RPC. When Sonarr sends a "torrent-add", it decodes the synthetic `.torrent`, extracts `chat_id:msg_id` from the comment, and downloads the file from Telegram in a background task. Reports download progress back to Sonarr via torrent-get. Package split into `router.py`, `handlers.py`, `state.py`, `downloader.py`, `websocket.py`.
 
 ### Key flow
 
@@ -42,10 +65,10 @@ Sonarr search → Torznab `/api?t=search` → searches Telegram channels → ret
 
 ### Shared state
 
-- `app/telegram_client.py` — singleton Telethon client, connected at startup
+- `app/telegram_client.py` — singleton Pyrogram client, connected at startup
 - `app/channels.py` — in-memory channel registry with JSON persistence; auto-discovers from Telegram on first run
 - `app/config.py` — `pydantic-settings` config with lazy proxy (`settings` import works at module level without triggering validation)
-- `app/transmission.py` — in-memory download state (`_downloads` dict), not persisted across restarts
+- `app/transmission/state.py` — in-memory download state (`_downloads` dict), persisted to `downloads.json`
 
 ## Configuration
 
