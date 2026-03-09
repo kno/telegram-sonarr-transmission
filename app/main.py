@@ -11,6 +11,7 @@ from app.torznab.router import router as torznab_router
 from app.download import router as download_router
 from app.stream import router as stream_router
 from app.transmission import router as transmission_router, resume_downloads
+from app.api_v2 import router as api_v2_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,6 +37,7 @@ app.include_router(torznab_router)
 app.include_router(download_router)
 app.include_router(stream_router)
 app.include_router(transmission_router)
+app.include_router(api_v2_router)
 
 
 @app.get("/health")
