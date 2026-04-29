@@ -3,7 +3,6 @@
 	import { search, fetchChannels } from '$lib/api';
 	import type { SearchResult } from '$lib/types';
 	import SearchResultCard from '$lib/components/SearchResultCard.svelte';
-	import { onMount } from 'svelte';
 
 	let query = $state('');
 	let season = $state('');
@@ -15,15 +14,16 @@
 	let offset = $state(0);
 	const limit = 50;
 
-	onMount(async () => {
-		if (settings.configured && channelsStore.channels.length === 0) {
-			try {
-				const channels = await fetchChannels(settings.apiKey);
-				channelsStore.setChannels(channels);
-			} catch {
-				// ignore
-			}
-		}
+	// Lazily fetch channels once apiKey hydrates — on hard reload this page
+	// mounts before the layout's onMount populates settings from localStorage.
+	let channelsRequested = false;
+	$effect(() => {
+		if (channelsRequested) return;
+		if (!settings.configured || channelsStore.channels.length > 0) return;
+		channelsRequested = true;
+		fetchChannels(settings.apiKey)
+			.then((ch) => channelsStore.setChannels(ch))
+			.catch(() => {});
 	});
 
 	const enabledCat = $derived(

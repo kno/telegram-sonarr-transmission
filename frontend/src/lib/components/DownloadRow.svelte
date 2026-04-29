@@ -5,7 +5,17 @@
 	import { settings } from '$lib/stores.svelte';
 	import ProgressBar from './ProgressBar.svelte';
 
-	let { download, onRemoved }: { download: Download; onRemoved: () => void } = $props();
+	let {
+		download,
+		onRemoved,
+		selected = false,
+		onToggleSelect
+	}: {
+		download: Download;
+		onRemoved: () => void;
+		selected?: boolean;
+		onToggleSelect?: (id: number, checked: boolean) => void;
+	} = $props();
 
 	let removing = $state(false);
 	let showConfirm = $state(false);
@@ -77,10 +87,52 @@
 			showConfirm = false;
 		}
 	}
+
+	function handleRowClick(e: MouseEvent) {
+		if (!onToggleSelect) return;
+		// Ignore clicks that landed on (or inside) any interactive control
+		// in the row — the action icons, the file-download link, and the
+		// checkbox itself all need to keep their native behavior.
+		const target = e.target as HTMLElement | null;
+		if (target?.closest('button, a, input, label')) return;
+		onToggleSelect(download.id, !selected);
+	}
+
+	function handleRowKeydown(e: KeyboardEvent) {
+		if (!onToggleSelect) return;
+		if (e.key !== ' ' && e.key !== 'Enter') return;
+		const target = e.target as HTMLElement | null;
+		if (target?.closest('button, a, input, label')) return;
+		e.preventDefault();
+		onToggleSelect(download.id, !selected);
+	}
 </script>
 
-<div class="rounded-lg border border-(--color-border) bg-(--color-surface) p-4">
-	<div class="mb-2 flex items-start justify-between gap-3">
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<div
+	class="rounded-lg border bg-(--color-surface) p-4 transition-colors"
+	class:border-transparent={selected}
+	class:ring-2={selected}
+	class:ring-(--color-primary)={selected}
+	class:border-(--color-border)={!selected}
+	class:cursor-pointer={!!onToggleSelect}
+	class:hover:bg-(--color-surface-hover)={!!onToggleSelect && !selected}
+	role={onToggleSelect ? 'checkbox' : undefined}
+	aria-checked={onToggleSelect ? selected : undefined}
+	tabindex={onToggleSelect ? 0 : undefined}
+	onclick={handleRowClick}
+	onkeydown={handleRowKeydown}
+>
+	<div class="mb-2 flex items-start gap-3">
+		{#if onToggleSelect}
+			<input
+				type="checkbox"
+				checked={selected}
+				onchange={(e) => onToggleSelect?.(download.id, e.currentTarget.checked)}
+				class="mt-1 h-4 w-4 shrink-0 cursor-pointer accent-(--color-primary)"
+				aria-label="Seleccionar {download.name}"
+			/>
+		{/if}
 		<div class="min-w-0 flex-1">
 			<h3 class="truncate text-sm font-medium">{download.name}</h3>
 			<div class="mt-1 flex items-center gap-3 text-xs">

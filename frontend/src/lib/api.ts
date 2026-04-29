@@ -191,24 +191,34 @@ export async function addDownload(apiKey: string, guid: string): Promise<any> {
 	return rpcCall(apiKey, 'torrent-add', { metainfo });
 }
 
-export async function removeDownload(
+export async function removeDownloads(
 	apiKey: string,
-	id: number,
+	ids: number[],
 	deleteData: boolean = false
 ): Promise<void> {
+	if (ids.length === 0) return;
 	await rpcCall(apiKey, 'torrent-remove', {
-		ids: [id],
+		ids,
 		'delete-local-data': deleteData
 	});
 }
 
-export async function pauseDownload(apiKey: string, id: number): Promise<void> {
-	await rpcCall(apiKey, 'torrent-stop', { ids: [id] });
+export async function pauseDownloads(apiKey: string, ids: number[]): Promise<void> {
+	if (ids.length === 0) return;
+	await rpcCall(apiKey, 'torrent-stop', { ids });
 }
 
-export async function resumeDownload(apiKey: string, id: number): Promise<void> {
-	await rpcCall(apiKey, 'torrent-start', { ids: [id] });
+export async function resumeDownloads(apiKey: string, ids: number[]): Promise<void> {
+	if (ids.length === 0) return;
+	await rpcCall(apiKey, 'torrent-start', { ids });
 }
+
+export const removeDownload = (apiKey: string, id: number, deleteData = false) =>
+	removeDownloads(apiKey, [id], deleteData);
+
+export const pauseDownload = (apiKey: string, id: number) => pauseDownloads(apiKey, [id]);
+
+export const resumeDownload = (apiKey: string, id: number) => resumeDownloads(apiKey, [id]);
 
 export function getFileUrl(apiKey: string, torrentId: number): string {
 	const base = getBaseUrl();

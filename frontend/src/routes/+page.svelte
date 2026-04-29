@@ -4,7 +4,6 @@
 	import { TR_STATUS } from '$lib/types';
 	import type { Download, SessionStats } from '$lib/types';
 	import ProgressBar from '$lib/components/ProgressBar.svelte';
-	import { onMount } from 'svelte';
 
 	let stats = $state<SessionStats | null>(null);
 	let activeDownloads = $state<Download[]>([]);
@@ -33,9 +32,15 @@
 		}
 	}
 
-	onMount(() => {
+	// Bootstrap when the apiKey arrives. On a hard reload of a non-root route
+	// the layout's onMount fires after this page mounts, so reading apiKey
+	// once at mount would race; an effect re-runs when it changes.
+	let channelsRequested = false;
+	$effect(() => {
+		if (!settings.apiKey) return;
 		refresh();
-		if (settings.configured && channelsStore.channels.length === 0) {
+		if (!channelsRequested && channelsStore.channels.length === 0) {
+			channelsRequested = true;
 			fetchChannels(settings.apiKey)
 				.then((ch) => channelsStore.setChannels(ch))
 				.catch(() => {});

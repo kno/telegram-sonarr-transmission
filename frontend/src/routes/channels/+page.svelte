@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { settings, channelsStore } from '$lib/stores.svelte';
 	import { fetchChannels } from '$lib/api';
-	import { onMount } from 'svelte';
 
 	let loading = $state(false);
 	let error = $state('');
@@ -24,7 +23,9 @@
 		}
 	}
 
-	onMount(() => {
+	// Wait for the apiKey to hydrate from localStorage before fetching —
+	// on a hard reload this page mounts before the layout's onMount runs.
+	$effect(() => {
 		if (settings.configured && channelsStore.channels.length === 0) {
 			loadChannels();
 		}

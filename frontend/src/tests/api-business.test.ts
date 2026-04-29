@@ -9,6 +9,9 @@ import {
 	removeDownload,
 	pauseDownload,
 	resumeDownload,
+	removeDownloads,
+	pauseDownloads,
+	resumeDownloads,
 	getFileUrl,
 	getSessionStats,
 	testConnection,
@@ -419,6 +422,63 @@ describe('RPC functions', () => {
 		const body = JSON.parse(mockFetch.mock.calls[0][1].body);
 		expect(body.method).toBe('torrent-start');
 		expect(body.arguments.ids).toEqual([7]);
+	});
+
+	it('removeDownloads sends every id in one rpc call', async () => {
+		const mockFetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve({ result: 'success', arguments: {} })
+		});
+		vi.stubGlobal('fetch', mockFetch);
+
+		await removeDownloads('apikey', [1, 2, 3], true);
+
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+		const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+		expect(body.method).toBe('torrent-remove');
+		expect(body.arguments.ids).toEqual([1, 2, 3]);
+		expect(body.arguments['delete-local-data']).toBe(true);
+	});
+
+	it('pauseDownloads sends every id in one rpc call', async () => {
+		const mockFetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve({ result: 'success', arguments: {} })
+		});
+		vi.stubGlobal('fetch', mockFetch);
+
+		await pauseDownloads('apikey', [4, 5]);
+
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+		const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+		expect(body.method).toBe('torrent-stop');
+		expect(body.arguments.ids).toEqual([4, 5]);
+	});
+
+	it('resumeDownloads sends every id in one rpc call', async () => {
+		const mockFetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve({ result: 'success', arguments: {} })
+		});
+		vi.stubGlobal('fetch', mockFetch);
+
+		await resumeDownloads('apikey', [10, 11, 12]);
+
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+		const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+		expect(body.method).toBe('torrent-start');
+		expect(body.arguments.ids).toEqual([10, 11, 12]);
+	});
+
+	it('bulk variants are no-ops when given an empty array', async () => {
+		const mockFetch = vi.fn();
+		vi.stubGlobal('fetch', mockFetch);
+
+		await removeDownloads('apikey', [], false);
+		await pauseDownloads('apikey', []);
+		await resumeDownloads('apikey', []);
+
+		expect(mockFetch).not.toHaveBeenCalled();
 	});
 
 	it('RPC throws on non-success result', async () => {

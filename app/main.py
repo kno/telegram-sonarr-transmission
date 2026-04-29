@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.channels import init_channels
 from app.telegram_client import connect_client, disconnect_client
@@ -45,10 +46,28 @@ async def health():
     return {"status": "ok", "service": "Telegram Torznab"}
 
 
+class SPAStaticFiles(StaticFiles):
+    """StaticFiles that falls back to index.html for unknown extensionless paths.
+
+    SvelteKit with adapter-static + SPA mode emits a single index.html, so a
+    hard reload on /downloads, /search, etc. would 404 without this. We only
+    fall back for paths that look like client-side routes (no file extension)
+    so that a missing /_app/*.js still surfaces a real 404.
+    """
+
+    async def get_response(self, path, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404 and not Path(path).suffix:
+                return await super().get_response("index.html", scope)
+            raise
+
+
 # Serve SvelteKit static frontend (must be last, after all API routes)
 _frontend_dir = Path(__file__).resolve().parent.parent / "frontend" / "build"
 if _frontend_dir.is_dir():
-    app.mount("/", StaticFiles(directory=str(_frontend_dir), html=True), name="frontend")
+    app.mount("/", SPAStaticFiles(directory=str(_frontend_dir), html=True), name="frontend")
 else:
 
     @app.get("/")
