@@ -3,13 +3,13 @@ import logging
 import re
 import xml.etree.ElementTree as ET
 from email.utils import format_datetime
-from typing import Optional
 from urllib.parse import quote
 
 from fastapi.responses import Response
 
 from app.channels import get_all_channels, get_channel_by_category, get_category_by_chat
 from app.config import settings
+from app.media import extract_media_info
 from app.telegram_client import get_client
 
 logger = logging.getLogger(__name__)
@@ -17,54 +17,112 @@ logger = logging.getLogger(__name__)
 TORZNAB_NS = "http://torznab.com/schemas/2015/feed"
 NEWZNAB_NS = "http://www.newznab.com/DTD/2010/feeds/attributes/"
 
+# Words too generic to be useful as standalone search terms — they'd match
+# almost any message and produce flood waits with no signal.
+_STOPWORDS = {
+    "the", "a", "an", "of", "is", "in", "to", "and", "or", "for", "on",
+    "el", "la", "los", "las", "de", "y", "o", "un", "una", "en",
+}
 
-def _extract_media_info(message) -> Optional[dict]:
-    """Extract filename, size, mime_type from a message with media."""
-    if not message.document:
+
+def build_progressive_queries(raw_query: str) -> list[str]:
+    """Build the list of queries to try per channel.
+
+    A multi-word query is already specific enough — issuing shorter prefixes
+    would just multiply the per-channel Telegram call volume across all
+    channels and add noise to the results. We only fall back to a shorter
+    variant for short queries (1-2 words), which are typical for series-name
+    searches where the channel's filename may not match the full phrase.
+    """
+    words = raw_query.split()
+    if not words or len(words) >= 3:
+        return [raw_query]
+    queries = [raw_query]
+    if len(words) == 2 and words[0].lower() not in _STOPWORDS:
+        queries.append(words[0])
+    return queries
+
+
+async def _resolve_paired_message(client, chat_id_int: int, message):
+    """Return the message that carries downloadable media for this match.
+
+    If `message` itself has media, returns it. Otherwise looks at the next
+    message (id+1) — some channels post a title/description as plain text
+    immediately followed by the file. Returns None if nothing usable.
+    """
+    if extract_media_info(message):
+        return message
+    try:
+        next_msg = await client.get_messages(chat_id_int, message.id + 1)
+    except Exception as e:
+        logger.debug("Could not fetch next message %d: %s", message.id + 1, e)
         return None
-    doc = message.document
-
-    info = {
-        "size": doc.file_size or 0,
-        "mime_type": doc.mime_type or "application/octet-stream",
-        "filename": doc.file_name,
-    }
-    return info
+    if not next_msg or getattr(next_msg, "empty", False):
+        return None
+    if extract_media_info(next_msg):
+        return next_msg
+    return None
 
 
-def _build_link(chat, message_id: int) -> str:
-    if chat.username:
-        return f"https://t.me/{chat.username}/{message_id}"
-    return f"https://t.me/c/{chat.id}/{message_id}"
+def _build_link(username: str | None, chat_id_int: int, message_id: int) -> str:
+    """Build a t.me link without needing a Chat object (avoids GetFullChannel)."""
+    if username:
+        return f"https://t.me/{username}/{message_id}"
+    # t.me/c/ expects the channel ID stripped of the -100 prefix
+    bare_id = str(chat_id_int).removeprefix("-100")
+    return f"https://t.me/c/{bare_id}/{message_id}"
+
+
+def _dedupe_by_guid(results: list[list[dict]]) -> list[dict]:
+    """Flatten per-channel results, dropping items that share a guid.
+
+    Defends against the same chat_id appearing under multiple categories
+    in channels.json (would otherwise emit duplicate keys to the frontend).
+    """
+    seen: set[str] = set()
+    items: list[dict] = []
+    for sublist in results:
+        for item in sublist:
+            if item["guid"] in seen:
+                continue
+            seen.add(item["guid"])
+            items.append(item)
+    return items
 
 
 async def _search_channel(chat_id: str, query: str, limit: int) -> list[dict]:
     """Search a single channel, returning items with media."""
     client = get_client()
     items = []
+    seen_msg_ids: set[int] = set()
     try:
         chat_id_int = int(chat_id)
-        chat = await client.get_chat(chat_id_int)
+        # Read channel metadata from local mapping — calling client.get_chat()
+        # triggers channels.GetFullChannel which flood-waits aggressively when
+        # many channels are searched in parallel.
+        ch_mapping = get_category_by_chat(chat_id)
+        username = ch_mapping.get("username") if ch_mapping else None
+        cat_id = ch_mapping["category_id"] if ch_mapping else 0
         async for message in client.search_messages(chat_id_int, query=query, limit=limit):
-            media_info = _extract_media_info(message)
-            if not media_info:
+            paired = await _resolve_paired_message(client, chat_id_int, message)
+            if paired is None or paired.id in seen_msg_ids:
                 continue
+            seen_msg_ids.add(paired.id)
+            media_info = extract_media_info(paired)
 
-            title = media_info["filename"] or (message.text or "Unknown")[:200]
-            link = _build_link(chat, message.id)
-            ch_mapping = get_category_by_chat(chat_id)
-            cat_id = ch_mapping["category_id"] if ch_mapping else 0
+            text_source = message.text or message.caption or ""
+            title = media_info["filename"] or text_source[:200] or "Unknown"
 
             items.append({
                 "title": title,
-                "guid": f"{chat_id}:{message.id}",
-                "link": link,
+                "guid": f"{chat_id}:{paired.id}",
+                "link": _build_link(username, chat_id_int, paired.id),
                 "chat_id": chat_id,
-                "msg_id": message.id,
-                "pub_date": message.date,
+                "msg_id": paired.id,
+                "pub_date": paired.date or message.date,
                 "size": media_info["size"],
                 "category_id": cat_id,
-                "description": (message.text or "")[:500],
+                "description": text_source[:500],
             })
     except Exception as e:
         logger.error("Error searching channel %s: %s", chat_id, e)
@@ -100,7 +158,7 @@ def _filter_by_season_ep(items: list[dict], season: str | None, ep: str | None) 
     return filtered
 
 
-_search_semaphore = asyncio.Semaphore(3)
+_search_semaphore = asyncio.Semaphore(2)
 
 
 async def _search_channel_throttled(chat_id: str, queries: list[str], limit: int) -> list[dict]:
@@ -116,6 +174,62 @@ async def _search_channel_throttled(chat_id: str, queries: list[str], limit: int
         return []
 
 
+async def search_channels(
+    channels: list[dict],
+    query: str,
+    limit: int,
+    season: str | None = None,
+    ep: str | None = None,
+) -> list[dict]:
+    """Run the full search pipeline across channels, returning sorted items.
+
+    Shared between the Torznab XML endpoint and the v2 JSON endpoint so they
+    can't drift apart.
+    """
+    if not channels:
+        return []
+
+    # Sonarr's t=tvsearch capability check sends an empty query; without it
+    # we'd hit every channel for nothing. Cap the fan-out in that case.
+    if not query:
+        channels = channels[:5]
+
+    per_channel = max(limit // len(channels), 10)
+    queries = build_progressive_queries(query)
+    tasks = [
+        _search_channel_throttled(ch["chat_id"], queries, per_channel)
+        for ch in channels
+    ]
+    results = await asyncio.gather(*tasks)
+
+    items = _dedupe_by_guid(results)
+    if season or ep:
+        items = _filter_by_season_ep(items, season, ep)
+    items.sort(key=lambda x: x["pub_date"], reverse=True)
+    return items
+
+
+def resolve_channels(cat: str | None) -> list[dict] | None:
+    """Resolve the target channel list for a search.
+
+    Returns None when `cat` is malformed (caller should surface an error).
+    Falls back to all channels when `cat` is unset or doesn't map to any
+    configured channel (so Sonarr/Radarr's standard 5000+ categories still
+    return useful results).
+    """
+    if not cat:
+        return get_all_channels()
+    try:
+        cat_ids = [int(c.strip()) for c in cat.split(",") if c.strip()]
+    except ValueError:
+        return None
+    matched = [
+        ch for cid in cat_ids
+        if (ch := get_channel_by_category(cid)) is not None
+    ]
+    return matched or get_all_channels()
+
+
 async def do_search(
     query: str | None,
     cat: str | None,
@@ -125,67 +239,16 @@ async def do_search(
     ep: str | None = None,
 ) -> Response:
     """Execute search across channels and return Torznab RSS XML."""
-    # Resolve target channels
-    if cat:
-        try:
-            cat_ids = [int(c.strip()) for c in cat.split(",") if c.strip()]
-        except ValueError:
-            from app.torznab.errors import torznab_error
-            return torznab_error(201, "Invalid category ID")
-        channels = [
-            ch for cid in cat_ids
-            if (ch := get_channel_by_category(cid)) is not None
-        ]
-        # If standard Newznab categories (5000+) didn't match any channel,
-        # fall back to all channels so Sonarr/Radarr searches still work
-        if not channels:
-            channels = get_all_channels()
-    else:
-        channels = get_all_channels()
+    channels = resolve_channels(cat)
+    if channels is None:
+        from app.torznab.errors import torznab_error
+        return torznab_error(201, "Invalid category ID")
 
     logger.info("Search: cat=%s → %d channel(s) resolved", cat, len(channels))
-    if not channels:
-        return _build_rss_response([], 0, offset)
-
-    # Build a list of progressively shorter queries to try.
-    # Telegram search is phrase-based, so the full query may not match if
-    # channels use different naming. We try full → shorter → single word.
-    # Season/episode filtering is done post-search on filenames.
     raw_query = query or ""
-    words = raw_query.split()
-    search_queries: list[str] = []
-    if words:
-        for i in range(len(words), 0, -1):
-            search_queries.append(" ".join(words[:i]))
-    else:
-        search_queries = [raw_query]
-
-    # Without a query, limit to first 5 channels to avoid flood waits
-    # (Sonarr test sends t=tvsearch without q)
-    if not raw_query:
-        channels = channels[:5]
-
-    per_channel = max(limit // len(channels), 10) if channels else limit
-
-    # Search channels with throttling to avoid Telegram flood waits
-    tasks = [
-        _search_channel_throttled(ch["chat_id"], search_queries, per_channel)
-        for ch in channels
-    ]
-    results = await asyncio.gather(*tasks)
-
-    # Flatten and sort by date descending
-    all_items = [item for sublist in results for item in sublist]
-
-    # Post-filter by season/episode if provided
-    if season or ep:
-        all_items = _filter_by_season_ep(all_items, season, ep)
-
-    all_items.sort(key=lambda x: x["pub_date"], reverse=True)
-
+    all_items = await search_channels(channels, raw_query, limit, season, ep)
     total = len(all_items)
     paginated = all_items[offset:offset + limit]
-
     return _build_rss_response(paginated, total, offset)
 
 

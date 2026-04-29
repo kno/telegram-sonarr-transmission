@@ -4,6 +4,7 @@ import os
 import time
 
 from app.config import settings
+from app.media import extract_media_info
 from app.telegram_client import get_client
 from app.transmission.state import get_downloads, save_state, load_state
 from app.transmission.websocket import broadcast_downloads, get_ws_clients
@@ -81,16 +82,16 @@ async def _download_from_telegram(torrent_id: int):
         client = get_client()
         message = await client.get_messages(int(info["chat_id"]), info["msg_id"])
 
-        if not message or not message.document:
+        media_info = extract_media_info(message)
+        if not media_info:
             info["error"] = 1
             info["errorString"] = "No media in message"
             info["status"] = 0
             save_state()
             return
 
-        doc = message.document
-        filename = doc.file_name or info["name"]
-        file_size = doc.file_size or 0
+        filename = media_info["filename"] or info["name"]
+        file_size = media_info["size"]
 
         info["name"] = filename
         info["totalSize"] = file_size

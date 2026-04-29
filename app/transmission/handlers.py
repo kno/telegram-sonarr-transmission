@@ -39,7 +39,7 @@ async def torrent_add(args):
     downloads = get_downloads()
 
     metainfo_b64 = args.get("metainfo", "")
-    download_dir = args.get("download-dir", settings.DOWNLOAD_DIR)
+    download_dir = settings.DOWNLOAD_DIR
     logger.info("torrent-add args: download-dir=%r", download_dir)
 
     if not metainfo_b64:

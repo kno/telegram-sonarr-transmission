@@ -104,13 +104,14 @@ class TestTorrentAdd:
         result = await torrent_add({"metainfo": metainfo})
         assert result == {"torrent-duplicate": None}
 
-    async def test_custom_download_dir(self, test_settings, tmp_path):
-        custom_dir = str(tmp_path / "custom")
-        result = await torrent_add({
+    async def test_client_download_dir_is_ignored(self, test_settings, tmp_path):
+        # We always serve from our own DOWNLOAD_DIR cache, regardless of what
+        # the *arr client (Sonarr/Radarr/etc) tries to set.
+        await torrent_add({
             "metainfo": self._make_metainfo(),
-            "download-dir": custom_dir,
+            "download-dir": str(tmp_path / "ignored"),
         })
-        assert get_downloads()[1]["downloadDir"] == custom_dir
+        assert get_downloads()[1]["downloadDir"] == test_settings.DOWNLOAD_DIR
 
 
 class TestTorrentGet:

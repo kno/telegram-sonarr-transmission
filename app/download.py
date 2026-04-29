@@ -5,6 +5,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import Response
 
 from app.config import settings
+from app.media import extract_media_info
 from app.telegram_client import get_client
 from app.torznab.errors import torznab_error
 
@@ -112,13 +113,13 @@ async def download_torrent(
         logger.error("Failed to get message %s:%s: %s", chat_id, msg_id, e)
         return torznab_error(300, "Message not found")
 
-    if not message or not message.document:
+    info = extract_media_info(message)
+    if not info:
         return torznab_error(300, "Message has no downloadable media")
 
     # Extract metadata (fast, no file download)
-    doc = message.document
-    filename = doc.file_name or f"file_{message.id}"
-    size = doc.file_size or 0
+    filename = info["filename"] or f"file_{message.id}"
+    size = info["size"]
 
     # Generate minimal .torrent instantly
     torrent_bytes = create_minimal_torrent(filename, size, chat_id, msg_id_int)

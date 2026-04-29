@@ -90,19 +90,26 @@ def mock_message():
         text="",
         date=None,
         has_document=True,
+        media_type="document",  # "document", "video", or None
     ):
         from datetime import datetime, timezone
         msg = MagicMock()
         msg.id = msg_id
         msg.text = text
+        msg.caption = None
         msg.date = date or datetime(2025, 1, 1, tzinfo=timezone.utc)
+        msg.empty = False
+        msg.document = None
+        msg.video = None
         if has_document:
-            msg.document = MagicMock()
-            msg.document.file_name = file_name
-            msg.document.file_size = file_size
-            msg.document.mime_type = mime_type
-        else:
-            msg.document = None
+            media = MagicMock()
+            media.file_name = file_name
+            media.file_size = file_size
+            media.mime_type = mime_type
+            if media_type == "video":
+                msg.video = media
+            else:
+                msg.document = media
         return msg
     return _make
 

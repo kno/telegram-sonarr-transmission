@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from app.config import settings
+from app.media import extract_media_info
 from app.telegram_client import get_client
 from app.torznab.errors import torznab_error
 
@@ -58,10 +59,11 @@ async def stream_file(
             logger.error("Stream: failed to get message %s:%s: %s", chat_id, msg_id, e)
             return torznab_error(300, "Message not found")
 
-        if not message or not message.document:
+        info = extract_media_info(message)
+        if not info:
             return torznab_error(300, "No downloadable media")
 
-        filename = message.document.file_name or f"file_{msg_id}"
+        filename = info["filename"] or f"file_{msg_id}"
 
         safe_name = filename.replace("/", "_").replace("\\", "_")
         cached = os.path.join(settings.DOWNLOAD_DIR, f"{chat_id}_{msg_id}_{safe_name}")

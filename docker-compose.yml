@@ -7,11 +7,11 @@ services:
     environment:
       SESSION_DIR: /data
       CHANNELS_FILE: /data/channels.json
-      DOWNLOAD_DIR: /data/cache
+      DOWNLOAD_DIR: /downloads2/Downloads
       USER_CHANNELS_FILE: ${USER_CHANNELS_FILE:-}
     volumes:
       - ./data:/data
-      - /mnt/ext2/Downloads:/data/cache
+      - /mnt/ext2:/downloads2
       - ${USER_CHANNELS_MOUNT:-/dev/null}:/data/user_channels.json:ro
     restart: unless-stopped
 

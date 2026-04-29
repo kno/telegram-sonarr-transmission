@@ -13,9 +13,11 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
-from app.channels import get_all_channels
+from app.channels import get_all_channels, get_channel_by_category
 from app.config import settings
+from app.media import extract_media_info
 from app.telegram_client import get_client
+from app.torznab.search import search_channels
 from app.transmission.downloader import enqueue_download, get_active_tasks
 from app.transmission.state import (
     get_downloads,
@@ -75,10 +77,6 @@ async def search(
     limit: int = Query(50, ge=1, le=100),
 ):
     """Search Telegram channels and return JSON results."""
-    from app.torznab.search import _search_channel_throttled, _filter_by_season_ep
-    from app.channels import get_channel_by_category, get_all_channels as _all
-
-    # Resolve target channels
     if channels:
         try:
             cat_ids = [int(c.strip()) for c in channels.split(",") if c.strip()]
@@ -87,41 +85,11 @@ async def search(
         target_channels = [
             ch for cid in cat_ids
             if (ch := get_channel_by_category(cid)) is not None
-        ]
-        if not target_channels:
-            target_channels = _all()
+        ] or get_all_channels()
     else:
-        target_channels = _all()
+        target_channels = get_all_channels()
 
-    if not target_channels:
-        return {"total": 0, "offset": offset, "items": []}
-
-    raw_query = q or ""
-    words = raw_query.split()
-    search_queries = []
-    if words:
-        for i in range(len(words), 0, -1):
-            search_queries.append(" ".join(words[:i]))
-    else:
-        search_queries = [raw_query]
-
-    if not raw_query:
-        target_channels = target_channels[:5]
-
-    import asyncio
-    per_channel = max(limit // len(target_channels), 10) if target_channels else limit
-    tasks = [
-        _search_channel_throttled(ch["chat_id"], search_queries, per_channel)
-        for ch in target_channels
-    ]
-    results = await asyncio.gather(*tasks)
-
-    all_items = [item for sublist in results for item in sublist]
-
-    if season or ep:
-        all_items = _filter_by_season_ep(all_items, season, ep)
-
-    all_items.sort(key=lambda x: x["pub_date"], reverse=True)
+    all_items = await search_channels(target_channels, q or "", limit, season, ep)
     total = len(all_items)
     paginated = all_items[offset:offset + limit]
 
@@ -188,12 +156,12 @@ async def add_download(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Cannot fetch message: {e}")
 
-    if not message or not message.document:
+    media_info = extract_media_info(message)
+    if not media_info:
         raise HTTPException(status_code=400, detail="Message has no downloadable media")
 
-    doc = message.document
-    filename = doc.file_name or "unknown"
-    file_size = doc.file_size or 0
+    filename = media_info["filename"] or "unknown"
+    file_size = media_info["size"]
 
     torrent_id = get_next_id()
     torrent_hash = uuid.uuid4().hex[:40]
