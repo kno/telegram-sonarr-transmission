@@ -67,6 +67,10 @@ def mock_telegram_client(monkeypatch):
     client.get_me = AsyncMock(return_value=MagicMock(first_name="Test", username="testbot"))
     client.get_messages = AsyncMock()
     client.get_chat = AsyncMock()
+    async def _empty_chat_history(*args, **kwargs):
+        if False:
+            yield None
+    client.get_chat_history = _empty_chat_history
     client.search_messages = AsyncMock()
     client.stream_media = AsyncMock()
     client.download_media = AsyncMock()
@@ -110,6 +114,9 @@ def mock_message():
         msg.empty = False
         msg.document = None
         msg.video = None
+        msg.audio = None
+        msg.photo = None
+        msg.sticker = None
         if has_document:
             media = MagicMock()
             media.file_name = file_name
@@ -117,6 +124,10 @@ def mock_message():
             media.mime_type = mime_type
             if media_type == "video":
                 msg.video = media
+            elif media_type == "audio":
+                msg.audio = media
+            elif media_type == "photo":
+                msg.photo = media
             else:
                 msg.document = media
         return msg

@@ -14,11 +14,11 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
-from app.channels import get_all_channels, get_channel_by_category
+from app.channels import get_all_channels, get_channel_by_category, get_category_by_chat
 from app.config import settings
 from app.destinations import DestinationsManager, list_dir
 from app.media import extract_media_info
-from app.telegram_client import get_client
+from app.telegram_client import get_channel_info, get_channel_messages, get_client, get_message_thumbnail
 from app.torznab.search import search_channels
 from app.transmission.downloader import enqueue_download, get_active_tasks
 from app.transmission.state import (
@@ -64,6 +64,74 @@ async def list_channels(apikey: str = Depends(_verify_apikey)):
         }
         for ch in channels
     ]
+
+
+def _known_channel(chat_id: int) -> dict:
+    channel = get_category_by_chat(str(chat_id))
+    if not channel:
+        raise HTTPException(status_code=404, detail="Unknown channel")
+    return channel
+
+
+def _telegram_error(status_code: int, detail: str) -> HTTPException:
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+@router.get("/channels/{chat_id}")
+async def channel_info(chat_id: int, apikey: str = Depends(_verify_apikey)):
+    """Return Telegram channel metadata for a known configured channel."""
+    _known_channel(chat_id)
+    try:
+        return await get_channel_info(chat_id)
+    except RuntimeError as e:
+        raise _telegram_error(502, f"Telegram unavailable: {e}")
+    except Exception as e:
+        raise _telegram_error(404, f"Channel inaccessible: {e}")
+
+
+@router.get("/channels/{chat_id}/messages")
+async def channel_messages(
+    chat_id: int,
+    apikey: str = Depends(_verify_apikey),
+    before: int | None = Query(None),
+    around: int | None = Query(None),
+    limit: int = Query(20, ge=1, le=50),
+):
+    """Return downloadable channel messages with cursor pagination."""
+    channel = _known_channel(chat_id)
+    try:
+        page = await get_channel_messages(chat_id, before=before, around=around, limit=limit)
+        metadata = await get_channel_info(chat_id)
+    except TimeoutError as e:
+        raise _telegram_error(429, str(e) or "Telegram rate limit, retry later")
+    except RuntimeError as e:
+        raise _telegram_error(502, f"Telegram unavailable: {e}")
+    except Exception as e:
+        raise _telegram_error(404, f"Channel inaccessible: {e}")
+
+    return {
+        **page,
+        "channel": metadata or {"id": chat_id, "title": channel["name"]},
+    }
+
+
+@router.get("/channels/{chat_id}/messages/{msg_id}/thumbnail")
+async def channel_message_thumbnail(
+    chat_id: int,
+    msg_id: int,
+    apikey: str = Depends(_verify_apikey),
+):
+    """Return a cached thumbnail for a message without downloading its full media."""
+    _known_channel(chat_id)
+    try:
+        path = await get_message_thumbnail(chat_id, msg_id, os.path.join(settings.DOWNLOAD_DIR, "thumbnails"))
+    except RuntimeError as e:
+        raise _telegram_error(502, f"Telegram unavailable: {e}")
+    except Exception as e:
+        raise _telegram_error(404, f"Thumbnail unavailable: {e}")
+    if not path:
+        raise HTTPException(status_code=404, detail="Thumbnail unavailable")
+    return FileResponse(path)
 
 
 # ── Search ────────────────────────────────────────────────────────────────

@@ -2,21 +2,19 @@
 
 Telegram messages carry their file in different attributes depending on how
 the sender uploaded it: `document` for "send as file", `video` for native
-video uploads. Both expose `file_name`, `file_size`, `mime_type` so the rest
-of the pipeline can treat them uniformly.
+video uploads, `audio` for music, and `photo` for images. All expose enough
+metadata for the rest of the pipeline to treat them uniformly.
 """
 
 
 def get_media(message):
-    """Return the message's media object (document or video), or None."""
+    """Return the message's downloadable media object, or None."""
     if message is None:
         return None
-    doc = getattr(message, "document", None)
-    if doc:
-        return doc
-    video = getattr(message, "video", None)
-    if video:
-        return video
+    for attr in ("document", "video", "audio", "photo"):
+        media = getattr(message, attr, None)
+        if media:
+            return media
     return None
 
 
