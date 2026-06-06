@@ -21,7 +21,6 @@
 	let browseLoading = $state(false);
 	let browseError = $state('');
 	let newDestName = $state('');
-	let newDestPath = $state('');
 
 	// Delete confirmation
 	let confirmingDelete = $state<string | null>(null);
@@ -71,7 +70,6 @@
 	async function openAddModal() {
 		showAddModal = true;
 		newDestName = '';
-		newDestPath = '';
 		browsePath = '/';
 		browseEntries = [];
 		browseError = '';
@@ -94,14 +92,12 @@
 		}
 	}
 
-	function selectDir(path: string) {
-		newDestPath = path;
-	}
-
 	async function handleCreate() {
-		if (!newDestName.trim() || !newDestPath.trim()) return;
+		if (!newDestName.trim()) return;
+		const path = browsePath.trim();
+		if (!path || path === '/') return;
 		try {
-			await createDestination(settings.apiKey, newDestName.trim(), newDestPath.trim());
+			await createDestination(settings.apiKey, newDestName.trim(), path);
 			showAddModal = false;
 			await loadDestinations();
 		} catch (e: any) {
@@ -339,15 +335,11 @@
 							<button
 								onclick={() => browseDir(entry.path)}
 								class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-(--color-text) transition-colors hover:bg-(--color-surface-hover)"
-								style={newDestPath === entry.path ? 'background-color: color-mix(in srgb, var(--color-primary) 10%, transparent)' : ''}
 							>
 								<svg class="h-4 w-4 shrink-0 text-(--color-warning)" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
 								</svg>
 								<span class="truncate">{entry.name}</span>
-								{#if newDestPath === entry.path}
-									<span class="ml-auto text-xs text-(--color-primary)">Seleccionado</span>
-								{/if}
 							</button>
 						{/if}
 					{/each}
@@ -367,7 +359,7 @@
 				</button>
 				<button
 					onclick={handleCreate}
-					disabled={!newDestName.trim() || !browsePath.trim()}
+					disabled={!newDestName.trim() || !browsePath.trim() || browsePath === '/'}
 					class="rounded-md px-4 py-2 text-sm font-medium text-white bg-(--color-primary) hover:bg-(--color-primary-hover) transition-colors disabled:opacity-50"
 				>
 					Aceptar
