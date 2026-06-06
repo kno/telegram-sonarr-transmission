@@ -1,0 +1,79 @@
+# openspec/config.yaml
+schema: spec-driven
+generated: 2026-06-06
+
+context: |
+  Telegram-to-Torznab bridge: exposes Telegram channels as a Torznab-compatible
+  indexer (Sonarr/Radarr/Prowlarr) and emulates a Transmission RPC server.
+
+  Backend: Python 3.12+ / FastAPI / Pyrogram / pydantic-settings / torf.
+  Frontend: SvelteKit 2 + Svelte 5 runes + Tailwind CSS 4 + TypeScript + Vite 6.
+
+  Architecture: single FastAPI service with 5 routers (torznab, download, stream,
+  transmission-rpc, api-v2). In-memory state with JSON file persistence. SPA
+  frontend built to static files and served by FastAPI. Telegram API fully mocked
+  in tests (no real connection needed).
+
+  Infrastructure: Docker Compose, env-config via pydantic-settings.
+
+testing:
+  strict_tdd: true
+  python:
+    runner: pytest
+    version: "9.0"
+    command: python3 -m pytest
+    coverage_command: python3 -m pytest --cov=app --cov-report=term-missing
+    coverage_threshold: 80
+    layers:
+      unit: pytest
+      integration: httpx.AsyncClient (ASGI transport)
+      e2e: false
+    plugins:
+      - pytest-asyncio (mode=auto)
+      - pytest-cov
+    quality:
+      linter: false
+      type_checker: false
+      formatter: false
+  frontend:
+    runner: vitest
+    version: "4.0"
+    command: npm run test
+    layers:
+      unit: vitest + jsdom
+      integration: false
+      e2e: false
+    quality:
+      linter: false
+      type_checker: svelte-check + tsc
+      formatter: false
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - State which Telegram API capabilities are needed
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    - Mock Telegram client via AsyncMock, never use real connections
+  design:
+    - Follow existing module structure (app/{domain}/)
+    - Use X | None syntax (not Optional)
+    - Use hmac.compare_digest for auth
+    - Document new state persistence requirements
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+    - Always include test tasks alongside implementation
+  apply:
+    tdd: true
+    test_command: python3 -m pytest --cov=app --cov-report=term-missing --tb=short
+    frontend_test_command: cd frontend && npm run test
+  verify:
+    test_command: python3 -m pytest --cov=app --cov-report=term-missing --tb=short
+    frontend_test_command: cd frontend && npm run test
+    build_command: cd frontend && npm run build
+    coverage_threshold: 80
+  archive:
+    - Warn before merging destructive deltas
+    - Ensure main specs updated before archiving

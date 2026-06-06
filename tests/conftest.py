@@ -1,3 +1,4 @@
+import asyncio
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -6,6 +7,13 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.config import get_settings, Settings
+
+# Python 3.12+ compatibility: ensure an event loop exists at import time
+# for Pyrogram which calls asyncio.get_event_loop() in its module init.
+try:
+    asyncio.get_running_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
 
 
 # ---------------------------------------------------------------------------
@@ -37,7 +45,7 @@ def test_settings(tmp_path, monkeypatch):
         "app.torznab.router", "app.torznab.search", "app.torznab.caps",
         "app.transmission.state", "app.transmission.router",
         "app.transmission.handlers", "app.transmission.downloader",
-        "app.telegram_client",
+        "app.telegram_client", "app.destinations",
     ):
         try:
             monkeypatch.setattr(f"{mod}.settings", s)

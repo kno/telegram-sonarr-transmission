@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     MAX_LIMIT: int = 100
     BASE_URL: str = "http://localhost:9117"
     DOWNLOAD_DIR: str = "/data/cache"
+    DESTINATIONS_FILE: str = "/data/destinations.json"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

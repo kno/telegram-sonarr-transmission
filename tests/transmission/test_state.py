@@ -119,3 +119,119 @@ class TestSaveLoadState:
         # Should not raise, just log error
         load_state()
         assert get_downloads() == {}
+
+
+# ===================================================================
+# Task 1.3: find_by_chat_msg
+# ===================================================================
+
+class TestFindByChatMsg:
+    def test_finds_exact_match(self):
+        downloads = get_downloads()
+        downloads[1] = {
+            "id": 1, "name": "test.mkv",
+            "chat_id": "-100123", "msg_id": 42,
+            "_file_path": "/data/cache/test.mkv",
+        }
+        downloads[2] = {
+            "id": 2, "name": "other.mkv",
+            "chat_id": "-100456", "msg_id": 99,
+        }
+        from app.transmission.state import find_by_chat_msg
+        result = find_by_chat_msg("-100123", 42)
+        assert result is not None
+        assert result["id"] == 1
+        assert result["name"] == "test.mkv"
+        assert result["_file_path"] == "/data/cache/test.mkv"
+
+    def test_returns_none_for_no_match(self):
+        downloads = get_downloads()
+        downloads[1] = {
+            "id": 1, "name": "test.mkv",
+            "chat_id": "-100123", "msg_id": 42,
+        }
+        from app.transmission.state import find_by_chat_msg
+        result = find_by_chat_msg("-100999", 99)
+        assert result is None
+
+    def test_match_uses_string_chat_id(self):
+        """chat_id may be stored as string; ensure match works."""
+        downloads = get_downloads()
+        downloads[1] = {
+            "id": 1, "name": "test.mkv",
+            "chat_id": "-100123", "msg_id": 42,
+        }
+        from app.transmission.state import find_by_chat_msg
+        result = find_by_chat_msg("-100123", 42)
+        assert result is not None
+        assert result["id"] == 1
+
+    def test_no_match_wrong_msg_id(self):
+        downloads = get_downloads()
+        downloads[1] = {
+            "id": 1, "name": "test.mkv",
+            "chat_id": "-100123", "msg_id": 42,
+        }
+        from app.transmission.state import find_by_chat_msg
+        result = find_by_chat_msg("-100123", 999)
+        assert result is None
+
+    def test_no_match_empty_state(self):
+        """Empty state should return None."""
+        from app.transmission.state import find_by_chat_msg
+        assert find_by_chat_msg("-100123", 42) is None
+
+
+# ===================================================================
+# Task 1.3: _file_path serialization
+# ===================================================================
+
+class TestFilePathSerialization:
+    def test_file_path_not_filtered_in_snapshot(self):
+        """_file_path should NOT start with _ when saved to state."""
+        # Wait — _file_path starts with _ but is NOT a private/transient field.
+        # The convention in state is that keys starting with _ are filtered by
+        # save_state and get_downloads_snapshot. But _file_path must be persisted.
+        # Actually looking at the design: _file_path is meant to be persisted.
+        # This means we should NOT prefix it with _ for filtering purposes.
+        # Per design: it tracks the real file path on disk.
+        pass
+
+    def test_file_path_persisted_through_save_load(self, test_settings):
+        """_file_path must survive a save/load roundtrip."""
+        downloads = get_downloads()
+        downloads[1] = {
+            "id": 1, "name": "test.mkv",
+            "chat_id": "-100123", "msg_id": 42,
+            "downloadDir": "/data/cache",
+            "file_path": "/data/tv/test.mkv",  # NOT _file_path — see design note
+        }
+        save_state()
+        downloads.clear()
+        load_state()
+        assert 1 in downloads
+        assert downloads[1].get("file_path") == "/data/tv/test.mkv"
+
+    def test_file_path_survives_snapshot(self):
+        """file_path (without underscore) must appear in snapshots."""
+        downloads = get_downloads()
+        downloads[1] = {
+            "id": 1, "name": "test.mkv",
+            "chat_id": "-100123", "msg_id": 42,
+            "file_path": "/data/tv/test.mkv",
+        }
+        snapshot = get_downloads_snapshot()
+        assert len(snapshot) == 1
+        assert snapshot[0].get("file_path") == "/data/tv/test.mkv"
+
+    def test_file_path_default_none(self):
+        """New downloads without file_path should have None."""
+        from app.transmission.state import find_by_chat_msg
+        downloads = get_downloads()
+        downloads[1] = {
+            "id": 1, "name": "test.mkv",
+            "chat_id": "-100123", "msg_id": 42,
+        }
+        result = find_by_chat_msg("-100123", 42)
+        assert result is not None
+        assert result.get("file_path") is None

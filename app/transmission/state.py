@@ -15,6 +15,17 @@ def get_downloads() -> dict[int, dict]:
     return _downloads
 
 
+def find_by_chat_msg(chat_id: str, msg_id: int) -> dict | None:
+    """Search state for a download matching ``chat_id`` and ``msg_id``.
+
+    Returns the download dict (including private keys) or ``None``.
+    """
+    for info in _downloads.values():
+        if info.get("chat_id") == chat_id and info.get("msg_id") == msg_id:
+            return info
+    return None
+
+
 def get_next_id() -> int:
     global _next_id
     tid = _next_id

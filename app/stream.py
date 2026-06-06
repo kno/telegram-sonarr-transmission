@@ -10,6 +10,7 @@ from app.config import settings
 from app.media import extract_media_info
 from app.telegram_client import get_client
 from app.torznab.errors import torznab_error
+from app.transmission.state import find_by_chat_msg
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -18,7 +19,30 @@ CHUNK_SIZE = 1024 * 1024  # 1MB
 
 
 def _find_cached_file(chat_id: str, msg_id: str) -> str | None:
-    """Find a cached file matching chat_id and msg_id prefix."""
+    """Find a cached file matching chat_id and msg_id.
+
+    Resolution priority:
+    1. If download state has a matching entry with ``file_path`` → return it
+    2. If download state has a matching entry with ``downloadDir`` → join with name
+    3. Fallback: scan ``settings.DOWNLOAD_DIR`` for ``{chat_id}_{msg_id}_*`` prefix
+    """
+    msg_id_int = int(msg_id)
+    entry = find_by_chat_msg(chat_id, msg_id_int)
+    if entry:
+        # Priority 1: explicit file_path
+        fp = entry.get("file_path")
+        if fp and os.path.exists(fp):
+            return fp
+
+        # Priority 2: downloadDir + name
+        dd = entry.get("downloadDir")
+        name = entry.get("name")
+        if dd and name:
+            candidate = os.path.join(dd, name)
+            if os.path.exists(candidate):
+                return candidate
+
+    # Priority 3: scan DOWNLOAD_DIR (legacy behavior)
     prefix = f"{chat_id}_{msg_id}_"
     if not os.path.isdir(settings.DOWNLOAD_DIR):
         return None

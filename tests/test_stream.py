@@ -123,3 +123,135 @@ class TestStreamRouter:
         })
         root = ET.fromstring(resp.text)
         assert root.get("code") == "300"
+
+
+# ===================================================================
+# Task 1.4 / 1.7: Stream resolution via state
+# ===================================================================
+
+class TestStreamResolvesFromState:
+    async def test_stream_resolves_from_file_path_in_state(
+        self, async_client, test_settings, clean_downloads, tmp_path
+    ):
+        """When state has a download with file_path, stream should use it directly."""
+        # Seed a download in state
+        import app.transmission.state as state_mod
+        state_mod._downloads[1] = {
+            "id": 1,
+            "name": "video.mkv",
+            "chat_id": "-100",
+            "msg_id": 42,
+            "downloadDir": str(tmp_path),
+            "file_path": str(tmp_path / "video.mkv"),
+            "status": 6,
+        }
+        # Create the actual file at the path
+        (tmp_path / "video.mkv").write_bytes(b"state_resolved_content")
+
+        resp = await async_client.get("/api/stream", params={
+            "id": "-100:42",
+            "apikey": "testapikey",
+        })
+        assert resp.status_code == 200
+        assert resp.content == b"state_resolved_content"
+
+    async def test_stream_resolves_from_download_dir_when_no_file_path(
+        self, async_client, test_settings, clean_downloads, tmp_path
+    ):
+        """When state has a download but no file_path, resolve via downloadDir + name."""
+        import app.transmission.state as state_mod
+        # Don't set file_path — fallback to downloadDir + name
+        state_mod._downloads[1] = {
+            "id": 1,
+            "name": "video.mkv",
+            "chat_id": "-100",
+            "msg_id": 43,
+            "downloadDir": str(tmp_path / "cache"),
+            "status": 6,
+        }
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "video.mkv").write_bytes(b"download_dir_content")
+
+        resp = await async_client.get("/api/stream", params={
+            "id": "-100:43",
+            "apikey": "testapikey",
+        })
+        assert resp.status_code == 200
+        assert resp.content == b"download_dir_content"
+
+    async def test_stream_falls_back_to_scan_when_no_state_match(
+        self, async_client, test_settings, clean_downloads, tmp_path
+    ):
+        """When state has no match, fall back to scanning DOWNLOAD_DIR."""
+        # Create file in DOWNLOAD_DIR
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "-100_44_video.mkv").write_bytes(b"scan_fallback")
+
+        resp = await async_client.get("/api/stream", params={
+            "id": "-100:44",
+            "apikey": "testapikey",
+        })
+        assert resp.status_code == 200
+        assert resp.content == b"scan_fallback"
+
+    async def test_stream_prefers_file_path_over_download_dir(
+        self, async_client, test_settings, clean_downloads, tmp_path
+    ):
+        """When both file_path and downloadDir are set, file_path wins."""
+        import app.transmission.state as state_mod
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir(parents=True)
+        moved_dir = tmp_path / "moved"
+        moved_dir.mkdir()
+
+        # A stale file in DOWNLOAD_DIR
+        (cache_dir / "-100_45_video.mkv").write_bytes(b"stale_cache")
+        # The actual file at the new location
+        (moved_dir / "video.mkv").write_bytes(b"moved_location")
+
+        state_mod._downloads[1] = {
+            "id": 1,
+            "name": "video.mkv",
+            "chat_id": "-100",
+            "msg_id": 45,
+            "downloadDir": str(cache_dir),
+            "file_path": str(moved_dir / "video.mkv"),
+            "status": 6,
+        }
+
+        resp = await async_client.get("/api/stream", params={
+            "id": "-100:45",
+            "apikey": "testapikey",
+        })
+        assert resp.status_code == 200
+        assert resp.content == b"moved_location"
+
+    async def test_state_file_path_but_file_missing_still_serves_from_download_dir(
+        self, async_client, test_settings, clean_downloads, tmp_path
+    ):
+        """If file_path points to a missing file, fall back to downloadDir + name."""
+        import app.transmission.state as state_mod
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "video.mkv").write_bytes(b"fallback_from_download_dir")
+
+        # file_path points to nonexistent file
+        nonexistent = tmp_path / "nonexistent" / "video.mkv"
+        state_mod._downloads[1] = {
+            "id": 1,
+            "name": "video.mkv",
+            "chat_id": "-100",
+            "msg_id": 46,
+            "downloadDir": str(cache_dir),
+            "file_path": str(nonexistent),
+            "status": 6,
+        }
+
+        resp = await async_client.get("/api/stream", params={
+            "id": "-100:46",
+            "apikey": "testapikey",
+        })
+        assert resp.status_code == 200
+        assert resp.content == b"fallback_from_download_dir"

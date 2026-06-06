@@ -12,6 +12,7 @@ services:
     volumes:
       - ./data:/data
       - /mnt/ext2:/downloads2
+      - /mnt/tocho:/downloads3
       - ${USER_CHANNELS_MOUNT:-/dev/null}:/data/user_channels.json:ro
     restart: unless-stopped
 

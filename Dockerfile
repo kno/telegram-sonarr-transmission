@@ -1,21 +1,31 @@
 # Stage 1: Build SvelteKit frontend
-FROM node:20-slim AS frontend-build
+FROM node:20-alpine AS frontend-build
 WORKDIR /frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-# Stage 2: Python runtime
-FROM python:3.12-slim
+# Stage 2: Build Python dependencies (C extensions need gcc + headers)
+FROM python:3.12-alpine AS python-deps
+RUN apk add --no-cache gcc musl-dev libuv-dev
+COPY requirements.txt .
+RUN python3 -m venv /venv && \
+    /venv/bin/pip install --no-cache-dir -r requirements.txt
+
+# Stage 3: Runtime
+FROM python:3.12-alpine
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev && \
-    pip install --no-cache-dir -r requirements.txt && \
-    apt-get purge -y gcc && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+# Runtime dependency: libuv for uvloop
+RUN apk add --no-cache libuv
 
+# Copy Python virtual environment with all deps (no build tools)
+COPY --from=python-deps /venv /venv
+ENV PATH="/venv/bin:$PATH"
+
+# Copy application code
 COPY app/ ./app/
 COPY scripts/ ./scripts/
 
