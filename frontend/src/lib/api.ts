@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import type { Channel, SearchResult, SearchResponse, Download, SessionStats } from './types';
+import type { Channel, SearchResult, SearchResponse, Download, SessionStats, Destination } from './types';
 
 const xmlParser = new XMLParser({
 	ignoreAttributes: false,
@@ -294,6 +294,76 @@ export function connectDownloadsWS(
 		clearTimeout(reconnectTimer);
 		ws?.close();
 	};
+}
+
+// --- Destinations (API v2) ---
+
+export async function fetchDestinations(apiKey: string): Promise<Destination[]> {
+	const base = getBaseUrl();
+	const res = await fetch(`${base}/api/v2/folders?apikey=${encodeURIComponent(apiKey)}`);
+	if (!res.ok) throw new Error(`Failed to fetch destinations: ${res.status}`);
+	return res.json();
+}
+
+export async function createDestination(apiKey: string, name: string, path: string): Promise<Destination> {
+	const base = getBaseUrl();
+	const res = await fetch(`${base}/api/v2/folders?apikey=${encodeURIComponent(apiKey)}`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ name, path }),
+	});
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(body.detail || `Failed to create destination: ${res.status}`);
+	}
+	return res.json();
+}
+
+export async function deleteDestination(apiKey: string, id: string): Promise<void> {
+	const base = getBaseUrl();
+	const res = await fetch(`${base}/api/v2/folders/${encodeURIComponent(id)}?apikey=${encodeURIComponent(apiKey)}`, {
+		method: 'DELETE',
+	});
+	if (!res.ok) {
+		if (res.status === 409) throw new Error('Folder has active downloads');
+		throw new Error(`Failed to delete destination: ${res.status}`);
+	}
+}
+
+export async function browseFilesystem(apiKey: string, path: string = '/'): Promise<{entries: any[], error?: string}> {
+	const base = getBaseUrl();
+	const url = `${base}/api/v2/browse?path=${encodeURIComponent(path)}&apikey=${encodeURIComponent(apiKey)}`;
+	const res = await fetch(url);
+	if (!res.ok) throw new Error(`Browse failed: ${res.status}`);
+	return res.json();
+}
+
+export async function moveDownload(apiKey: string, downloadId: number, destinationId: string): Promise<any> {
+	const base = getBaseUrl();
+	const res = await fetch(`${base}/api/v2/downloads/${downloadId}/move?apikey=${encodeURIComponent(apiKey)}`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ destination_id: destinationId }),
+	});
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(body.detail || `Move failed: ${res.status}`);
+	}
+	return res.json();
+}
+
+export async function bulkMoveDownloads(apiKey: string, ids: number[], destinationId: string): Promise<any> {
+	const base = getBaseUrl();
+	const res = await fetch(`${base}/api/v2/downloads/bulk-move?apikey=${encodeURIComponent(apiKey)}`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ ids, destination_id: destinationId }),
+	});
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(body.detail || `Bulk move failed: ${res.status}`);
+	}
+	return res.json();
 }
 
 // --- Utilities ---

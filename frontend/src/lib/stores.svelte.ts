@@ -1,5 +1,5 @@
 import { getSettings, saveSettings as persistSettings } from './api';
-import type { Channel } from './types';
+import type { Channel, Destination } from './types';
 
 // --- Settings Store ---
 
@@ -111,3 +111,34 @@ class ThemeStore {
 }
 
 export const theme = new ThemeStore();
+
+// --- Destinations Store ---
+
+export class DestinationsStore {
+	destinations = $state<Destination[]>([]);
+
+	load() {
+		if (typeof localStorage === 'undefined') return;
+		const raw = localStorage.getItem('destinations');
+		if (raw) {
+			try {
+				this.destinations = JSON.parse(raw);
+			} catch {
+				// ignore
+			}
+		}
+	}
+
+	setDestinations(destinations: Destination[]) {
+		this.destinations = destinations;
+		this.persist();
+	}
+
+	private persist() {
+		if (typeof localStorage !== 'undefined') {
+			localStorage.setItem('destinations', JSON.stringify(this.destinations));
+		}
+	}
+}
+
+export const destinationsStore = new DestinationsStore();

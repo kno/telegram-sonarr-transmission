@@ -5,10 +5,12 @@
 		connectDownloadsWS,
 		pauseDownloads,
 		resumeDownloads,
-		removeDownloads
+		removeDownloads,
+		fetchDestinations,
+		bulkMoveDownloads
 	} from '$lib/api';
 	import { TR_STATUS } from '$lib/types';
-	import type { Download } from '$lib/types';
+	import type { Download, Destination } from '$lib/types';
 	import DownloadRow from '$lib/components/DownloadRow.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 
@@ -18,6 +20,10 @@
 	let selectedIds = new SvelteSet<number>();
 	let confirmingDelete = $state(false);
 	let bulkPending = $state(false);
+	let showBulkMoveMenu = $state(false);
+	let bulkMoveDestinations = $state<Destination[]>([]);
+	let bulkMoveLoading = $state(false);
+	let bulkMoveResult = $state<string>('');
 
 	const hasActive = $derived(
 		downloads.some((d) => d.status === TR_STATUS.DOWNLOAD || d.status === TR_STATUS.DOWNLOAD_WAIT)
@@ -140,6 +146,37 @@
 		}
 	}
 
+	async function openBulkMoveMenu() {
+		showBulkMoveMenu = true;
+		bulkMoveResult = '';
+		bulkMoveLoading = true;
+		try {
+			bulkMoveDestinations = await fetchDestinations(settings.apiKey);
+		} catch {
+			bulkMoveResult = 'Error al cargar destinos';
+		} finally {
+			bulkMoveLoading = false;
+		}
+	}
+
+	async function handleBulkMove(destinationId: string) {
+		bulkPending = true;
+		bulkMoveResult = '';
+		try {
+			const result = await bulkMoveDownloads(settings.apiKey, [...selectedIds], destinationId);
+			const ok = result.results.filter((r: any) => r.status === 'moved').length;
+			const err = result.results.filter((r: any) => r.status === 'error').length;
+			bulkMoveResult = `${ok} movida${ok === 1 ? '' : 's'}${err ? `, ${err} con error${err === 1 ? '' : 'es'}` : ''}`;
+			showBulkMoveMenu = false;
+			clearSelection();
+			fetchDownloads();
+		} catch (e: any) {
+			bulkMoveResult = e.message || 'Error al mover';
+		} finally {
+			bulkPending = false;
+		}
+	}
+
 	async function bulkRemove(deleteData: boolean) {
 		if (selectedIds.size === 0) return;
 		bulkPending = true;
@@ -210,6 +247,55 @@
 					>
 						Reanudar{resumableSelected.length > 0 ? ` (${resumableSelected.length})` : ''}
 					</button>
+					<div class="relative">
+						<button
+							onclick={openBulkMoveMenu}
+							disabled={bulkPending || selectedIds.size === 0}
+							class="rounded-md px-3 py-1.5 text-sm font-medium text-white bg-(--color-primary) transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
+						>
+							Mover a...
+						</button>
+
+						{#if showBulkMoveMenu}
+							<div class="absolute right-0 top-full z-20 mt-1 w-56 rounded-lg border border-(--color-border) bg-(--color-surface) p-2 shadow-lg">
+								<div class="mb-1 flex items-center justify-between">
+									<span class="text-xs font-medium text-(--color-text-muted)">Mover {selectedIds.size} a...</span>
+									<button
+										onclick={() => (showBulkMoveMenu = false)}
+										class="rounded p-0.5 text-(--color-text-muted) hover:bg-(--color-surface-hover)"
+										aria-label="Cerrar"
+									>
+										<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+										</svg>
+									</button>
+								</div>
+
+								{#if bulkMoveLoading}
+									<p class="py-2 text-center text-xs text-(--color-text-muted)">Cargando...</p>
+								{:else if bulkMoveDestinations.length === 0}
+									<p class="py-2 text-center text-xs text-(--color-text-muted)">Sin destinos configurados</p>
+								{:else}
+									{#each bulkMoveDestinations as dest (dest.id)}
+										<button
+											onclick={() => handleBulkMove(dest.id)}
+											disabled={bulkPending}
+											class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-(--color-text) transition-colors hover:bg-(--color-surface-hover) disabled:opacity-50"
+										>
+											<svg class="h-3.5 w-3.5 shrink-0 text-(--color-text-muted)" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+											</svg>
+											<span class="truncate">{dest.name}</span>
+											<span class="ml-auto shrink-0 text-xs text-(--color-text-muted)">{dest.path}</span>
+										</button>
+									{/each}
+								{/if}
+							</div>
+						{/if}
+					</div>
+					{#if bulkMoveResult}
+						<span class="text-sm text-(--color-success)">{bulkMoveResult}</span>
+					{/if}
 					<button
 						onclick={() => (confirmingDelete = true)}
 						disabled={bulkPending || selectedIds.size === 0}

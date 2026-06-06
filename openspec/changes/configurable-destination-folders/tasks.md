@@ -49,10 +49,10 @@ Chain strategy: pending
 
 ## Phase 3: Frontend
 
-- [ ] 3.1 `frontend/src/lib/types.ts` — add `Destination { id, name, path }`, add `downloadDir?: string` to `Download`
-- [ ] 3.2 `frontend/src/lib/api.ts` — add `fetchDestinations`, `createDestination`, `deleteDestination`, `browseFilesystem`, `moveDownload`, `bulkMoveDownloads`
-- [ ] 3.3 `frontend/src/lib/stores.svelte.ts` — add `destinationsStore` (class with `$state`, localStorage cache, mirroring `channelsStore` pattern)
-- [ ] 3.4 `frontend/src/routes/settings/+page.svelte` — add "Carpetas destino" section: destination list with create/delete, file browser modal (path input, dir listing, select)
-- [ ] 3.5 `frontend/src/lib/components/DownloadRow.svelte` — add "Mover a..." dropdown (destinations list) for completed downloads
-- [ ] 3.6 `frontend/src/routes/downloads/+page.svelte` — add bulk "Mover a..." action in selection toolbar
-- [ ] 3.7 `frontend/src/tests/components.test.ts` — test destination CRUD UI, file browser modal, move action button
+- [x] 3.1 `frontend/src/lib/types.ts` — add `Destination { id, name, path, created_at }`, add `downloadDir?: string` to `Download`
+- [x] 3.2 `frontend/src/lib/api.ts` — add `fetchDestinations`, `createDestination`, `deleteDestination`, `browseFilesystem`, `moveDownload`, `bulkMoveDownloads`
+- [x] 3.3 `frontend/src/lib/stores.svelte.ts` — add `destinationsStore` (class with `$state`, localStorage cache, mirroring `channelsStore` pattern)
+- [x] 3.4 `frontend/src/routes/settings/+page.svelte` — add "Carpetas destino" section: destination list with create/delete, file browser modal (path input, dir listing, select)
+- [x] 3.5 `frontend/src/lib/components/DownloadRow.svelte` — add "Mover a..." dropdown (destinations list) for completed downloads
+- [x] 3.6 `frontend/src/routes/downloads/+page.svelte` — add bulk "Mover a..." action in selection toolbar
+- [x] 3.7 `frontend/src/tests/components.test.ts` — test destination CRUD UI, file browser modal, move action button

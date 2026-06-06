@@ -295,3 +295,66 @@ describe('ThemeStore', () => {
 		expect(theme.dark).toBe(false);
 	});
 });
+
+// --- DestinationsStore ---
+
+describe('DestinationsStore', () => {
+	it('load() reads destinations from localStorage', async () => {
+		const destinations = [
+			{ id: '1', name: 'Series', path: '/data/tv', created_at: '2024-01-01T00:00:00Z' }
+		];
+		storage['destinations'] = JSON.stringify(destinations);
+
+		const { destinationsStore } = await import('$lib/stores.svelte');
+		destinationsStore.load();
+
+		expect(destinationsStore.destinations).toEqual(destinations);
+	});
+
+	it('load() handles invalid JSON gracefully', async () => {
+		storage['destinations'] = 'not-valid-json';
+
+		const { destinationsStore } = await import('$lib/stores.svelte');
+		destinationsStore.destinations = [];
+		destinationsStore.load();
+
+		expect(destinationsStore.destinations).toEqual([]);
+	});
+
+	it('load() does nothing when no stored destinations', async () => {
+		const { destinationsStore } = await import('$lib/stores.svelte');
+		destinationsStore.destinations = [{ id: '1', name: 'existing', path: '/p', created_at: '' }];
+		destinationsStore.load();
+
+		// destinations not overwritten
+		expect(destinationsStore.destinations).toHaveLength(1);
+	});
+
+	it('setDestinations() sets new destinations and persists', async () => {
+		const { destinationsStore } = await import('$lib/stores.svelte');
+		destinationsStore.destinations = [];
+
+		const newDests = [
+			{ id: '1', name: 'Series', path: '/data/tv', created_at: '' },
+			{ id: '2', name: 'Movies', path: '/data/movies', created_at: '' }
+		];
+		destinationsStore.setDestinations(newDests);
+
+		expect(destinationsStore.destinations).toHaveLength(2);
+		expect(destinationsStore.destinations[0].name).toBe('Series');
+		expect(storage['destinations']).toBeDefined();
+	});
+
+	it('persists to localStorage on setDestinations', async () => {
+		const { destinationsStore } = await import('$lib/stores.svelte');
+		destinationsStore.destinations = [];
+
+		destinationsStore.setDestinations([
+			{ id: 'x', name: 'Test', path: '/t', created_at: '' }
+		]);
+
+		const persisted = JSON.parse(storage['destinations']);
+		expect(persisted).toHaveLength(1);
+		expect(persisted[0].name).toBe('Test');
+	});
+});

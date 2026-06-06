@@ -15,7 +15,13 @@ import {
 	getFileUrl,
 	getSessionStats,
 	testConnection,
-	connectDownloadsWS
+	connectDownloadsWS,
+	fetchDestinations,
+	createDestination,
+	deleteDestination,
+	browseFilesystem,
+	moveDownload,
+	bulkMoveDownloads
 } from '$lib/api';
 
 // --- localStorage mock ---
@@ -741,5 +747,259 @@ describe('connectDownloadsWS', () => {
 
 		connectDownloadsWS('my-key', vi.fn());
 		expect(capturedUrl).toContain('/ws/downloads?apikey=my-key');
+	});
+});
+
+// --- Destinations (API v2) ---
+
+describe('fetchDestinations', () => {
+	it('returns parsed destinations from API', async () => {
+		const destinations = [
+			{ id: '1', name: 'Series', path: '/data/tv', created_at: '2024-01-01T00:00:00Z' },
+			{ id: '2', name: 'Películas', path: '/data/movies', created_at: '2024-01-02T00:00:00Z' }
+		];
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve(destinations)
+		}));
+
+		const result = await fetchDestinations('testkey');
+		expect(result).toHaveLength(2);
+		expect(result[0].name).toBe('Series');
+		expect(result[1].path).toBe('/data/movies');
+	});
+
+	it('throws on non-ok response', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+
+		await expect(fetchDestinations('key')).rejects.toThrow('Failed to fetch destinations: 500');
+	});
+
+	it('returns empty array when no destinations', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve([])
+		}));
+
+		const result = await fetchDestinations('key');
+		expect(result).toEqual([]);
+	});
+});
+
+describe('createDestination', () => {
+	it('creates and returns a new destination', async () => {
+		const created = { id: '3', name: 'Música', path: '/data/music', created_at: '2024-03-01T00:00:00Z' };
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve(created)
+		}));
+
+		const result = await createDestination('key', 'Música', '/data/music');
+		expect(result.name).toBe('Música');
+		expect(result.path).toBe('/data/music');
+		expect(result.id).toBe('3');
+	});
+
+	it('throws with server error detail on failure', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+			ok: false,
+			status: 400,
+			json: () => Promise.resolve({ detail: 'name and path are required' })
+		}));
+
+		await expect(createDestination('key', '', '')).rejects.toThrow('name and path are required');
+	});
+
+	it('throws generic error when response has no detail', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+			ok: false,
+			status: 500,
+			json: () => Promise.resolve({})
+		}));
+
+		await expect(createDestination('key', 'n', '/p')).rejects.toThrow('Failed to create destination: 500');
+	});
+
+	it('sends POST with JSON body', async () => {
+		const mockFetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve({ id: '1', name: 'Test', path: '/test', created_at: '' })
+		});
+		vi.stubGlobal('fetch', mockFetch);
+
+		await createDestination('key', 'Test', '/test');
+
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+		const opts = mockFetch.mock.calls[0][1];
+		expect(opts.method).toBe('POST');
+		expect(JSON.parse(opts.body)).toEqual({ name: 'Test', path: '/test' });
+	});
+});
+
+describe('deleteDestination', () => {
+	it('sends DELETE request and resolves on success', async () => {
+		const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+		vi.stubGlobal('fetch', mockFetch);
+
+		await deleteDestination('key', '1');
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+		expect(mockFetch.mock.calls[0][0]).toContain('/api/v2/folders/1');
+		expect(mockFetch.mock.calls[0][1].method).toBe('DELETE');
+	});
+
+	it('throws "Folder has active downloads" on 409', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 409 }));
+
+		await expect(deleteDestination('key', '1')).rejects.toThrow('Folder has active downloads');
+	});
+
+	it('throws generic error on other failure', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+
+		await expect(deleteDestination('key', '1')).rejects.toThrow('Failed to delete destination: 500');
+	});
+});
+
+describe('browseFilesystem', () => {
+	it('returns directory entries', async () => {
+		const response = {
+			entries: [
+				{ name: 'tv', type: 'dir', path: '/data/tv' },
+				{ name: 'movies', type: 'dir', path: '/data/movies' }
+			]
+		};
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve(response)
+		}));
+
+		const result = await browseFilesystem('key', '/data');
+		expect(result.entries).toHaveLength(2);
+		expect(result.entries[0].name).toBe('tv');
+	});
+
+	it('handles permission error response', async () => {
+		const response = { entries: [], error: 'Permission denied' };
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve(response)
+		}));
+
+		const result = await browseFilesystem('key', '/root');
+		expect(result.entries).toEqual([]);
+		expect(result.error).toBe('Permission denied');
+	});
+
+	it('throws on HTTP error', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 403 }));
+
+		await expect(browseFilesystem('key', '/etc')).rejects.toThrow('Browse failed: 403');
+	});
+
+	it('defaults path to /', async () => {
+		const mockFetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve({ entries: [] })
+		});
+		vi.stubGlobal('fetch', mockFetch);
+
+		await browseFilesystem('key');
+		expect(mockFetch.mock.calls[0][0]).toContain('path=%2F');
+	});
+});
+
+describe('moveDownload', () => {
+	it('moves a download to a destination', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve({ status: 'moved' })
+		}));
+
+		const result = await moveDownload('key', 1, 'dest-1');
+		expect(result.status).toBe('moved');
+	});
+
+	it('sends POST with destination_id', async () => {
+		const mockFetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve({ status: 'moved' })
+		});
+		vi.stubGlobal('fetch', mockFetch);
+
+		await moveDownload('key', 42, 'dest-abc');
+
+		const opts = mockFetch.mock.calls[0][1];
+		expect(opts.method).toBe('POST');
+		expect(JSON.parse(opts.body)).toEqual({ destination_id: 'dest-abc' });
+	});
+
+	it('throws on error response', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+			ok: false,
+			status: 404,
+			json: () => Promise.resolve({ detail: 'Download not found' })
+		}));
+
+		await expect(moveDownload('key', 999, 'dest-1')).rejects.toThrow('Download not found');
+	});
+});
+
+describe('bulkMoveDownloads', () => {
+	it('moves multiple downloads to a destination', async () => {
+		const response = {
+			results: [
+				{ id: 1, status: 'moved' },
+				{ id: 2, status: 'moved' }
+			]
+		};
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve(response)
+		}));
+
+		const result = await bulkMoveDownloads('key', [1, 2], 'dest-1');
+		expect(result.results).toHaveLength(2);
+		expect(result.results[0].status).toBe('moved');
+	});
+
+	it('handles partial success response', async () => {
+		const response = {
+			results: [
+				{ id: 1, status: 'moved' },
+				{ id: 2, status: 'error', error: 'File not found' }
+			]
+		};
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve(response)
+		}));
+
+		const result = await bulkMoveDownloads('key', [1, 2], 'dest-1');
+		expect(result.results[1].status).toBe('error');
+		expect(result.results[1].error).toBe('File not found');
+	});
+
+	it('throws on error response', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+			ok: false,
+			status: 400,
+			json: () => Promise.resolve({ detail: 'ids and destination_id are required' })
+		}));
+
+		await expect(bulkMoveDownloads('key', [], 'dest-1')).rejects.toThrow('ids and destination_id are required');
+	});
+
+	it('sends POST with ids and destination_id', async () => {
+		const mockFetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve({ results: [] })
+		});
+		vi.stubGlobal('fetch', mockFetch);
+
+		await bulkMoveDownloads('key', [1, 2, 3], 'dest-xyz');
+
+		const opts = mockFetch.mock.calls[0][1];
+		expect(opts.method).toBe('POST');
+		expect(JSON.parse(opts.body)).toEqual({ ids: [1, 2, 3], destination_id: 'dest-xyz' });
 	});
 });

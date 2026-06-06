@@ -602,3 +602,125 @@ describe('ThemeToggle', () => {
 		expect(theme.dark).toBe(true);
 	});
 });
+
+// --- DownloadRow: "Mover a..." destination button ---
+
+describe('DownloadRow - Move to destination', () => {
+	const onRemoved = vi.fn();
+
+	beforeEach(() => {
+		onRemoved.mockClear();
+		// Mock localStorage with apiKey
+		const storage: Record<string, string> = {};
+		vi.stubGlobal('localStorage', {
+			getItem: (key: string) => storage[key] ?? null,
+			setItem: (key: string, val: string) => { storage[key] = val; },
+			removeItem: (key: string) => { delete storage[key]; }
+		});
+		storage['apiKey'] = 'test-key';
+	});
+
+	it('shows "Mover a..." button for completed downloads', () => {
+		render(DownloadRow, {
+			props: {
+				download: makeDownload({
+					status: TR_STATUS.SEED,
+					isFinished: true,
+					percentDone: 1
+				}),
+				onRemoved
+			}
+		});
+
+		expect(screen.getByTitle('Mover a...')).toBeInTheDocument();
+	});
+
+	it('does not show "Mover a..." for active downloads', () => {
+		render(DownloadRow, {
+			props: {
+				download: makeDownload({ status: TR_STATUS.DOWNLOAD }),
+				onRemoved
+			}
+		});
+
+		expect(screen.queryByTitle('Mover a...')).toBeNull();
+	});
+
+	it('does not show "Mover a..." for stopped (not finished) downloads', () => {
+		render(DownloadRow, {
+			props: {
+				download: makeDownload({ status: TR_STATUS.STOPPED, isFinished: false }),
+				onRemoved
+			}
+		});
+
+		expect(screen.queryByTitle('Mover a...')).toBeNull();
+	});
+
+	it('shows destination dropdown after clicking "Mover a..."', async () => {
+		// Mock fetch to return destinations list
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve([
+				{ id: '1', name: 'Series TV', path: '/data/tv', created_at: '' }
+			])
+		}));
+
+		render(DownloadRow, {
+			props: {
+				download: makeDownload({
+					status: TR_STATUS.SEED,
+					isFinished: true,
+					percentDone: 1
+				}),
+				onRemoved
+			}
+		});
+
+		const moveBtn = screen.getByTitle('Mover a...');
+		await fireEvent.click(moveBtn);
+
+		// Destination list should appear
+		await vi.waitFor(() => {
+			expect(screen.getByText('Series TV')).toBeInTheDocument();
+		});
+	});
+});
+
+// --- Destinations: type structure ---
+
+describe('Destination type', () => {
+	it('has the correct structure', () => {
+		const dest: import('$lib/types').Destination = {
+			id: 'abc-123',
+			name: 'Series',
+			path: '/data/tv',
+			created_at: '2024-01-01T00:00:00Z'
+		};
+
+		expect(dest.id).toBe('abc-123');
+		expect(dest.name).toBe('Series');
+		expect(dest.path).toBe('/data/tv');
+		expect(dest.created_at).toBe('2024-01-01T00:00:00Z');
+	});
+
+	it('Download type includes optional downloadDir', () => {
+		const dl: import('$lib/types').Download = {
+			id: 1,
+			name: 'test.mkv',
+			status: 4,
+			percentDone: 0.5,
+			totalSize: 1000,
+			downloadedEver: 500,
+			rateDownload: 100,
+			eta: 100,
+			error: 0,
+			errorString: '',
+			isFinished: false,
+			doneDate: 0,
+			downloadDir: '/data/custom'
+		};
+
+		expect(dl.downloadDir).toBe('/data/custom');
+	});
+});

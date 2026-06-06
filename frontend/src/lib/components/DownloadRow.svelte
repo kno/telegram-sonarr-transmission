@@ -1,7 +1,7 @@
 <script lang="ts">
-	import type { Download } from '$lib/types';
+	import type { Download, Destination } from '$lib/types';
 	import { TR_STATUS } from '$lib/types';
-	import { formatSize, formatSpeed, formatEta, removeDownload, pauseDownload, resumeDownload, getFileUrl } from '$lib/api';
+	import { formatSize, formatSpeed, formatEta, removeDownload, pauseDownload, resumeDownload, getFileUrl, fetchDestinations, moveDownload } from '$lib/api';
 	import { settings } from '$lib/stores.svelte';
 	import ProgressBar from './ProgressBar.svelte';
 
@@ -19,6 +19,12 @@
 
 	let removing = $state(false);
 	let showConfirm = $state(false);
+	let showMoveMenu = $state(false);
+	let moveDestinations = $state<Destination[]>([]);
+	let loadingDestinations = $state(false);
+	let moving = $state(false);
+	let moveError = $state('');
+	let moveSuccess = $state('');
 
 	const statusLabel = $derived.by(() => {
 		if (download.error) return 'Error';
@@ -86,6 +92,42 @@
 			removing = false;
 			showConfirm = false;
 		}
+	}
+
+	async function openMoveMenu() {
+		showMoveMenu = true;
+		moveError = '';
+		moveSuccess = '';
+		loadingDestinations = true;
+		try {
+			moveDestinations = await fetchDestinations(settings.apiKey);
+		} catch {
+			moveError = 'Error al cargar destinos';
+		} finally {
+			loadingDestinations = false;
+		}
+	}
+
+	async function handleMove(destId: string) {
+		moving = true;
+		moveError = '';
+		moveSuccess = '';
+		try {
+			await moveDownload(settings.apiKey, download.id, destId);
+			moveSuccess = 'Movido';
+			showMoveMenu = false;
+			onRemoved();
+		} catch (e: any) {
+			moveError = e.message || 'Error al mover';
+		} finally {
+			moving = false;
+		}
+	}
+
+	function closeMoveMenu() {
+		showMoveMenu = false;
+		moveError = '';
+		moveSuccess = '';
 	}
 
 	function handleRowClick(e: MouseEvent) {
@@ -182,6 +224,62 @@
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
 						</svg>
 					</a>
+					<div class="relative" class:z-10={showMoveMenu}>
+						<button
+							onclick={openMoveMenu}
+							disabled={moving}
+							class="rounded-md p-1.5 text-(--color-text-muted) transition-colors hover:bg-(--color-surface-hover) hover:text-(--color-primary) disabled:opacity-50"
+							title="Mover a..."
+						>
+							<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+							</svg>
+						</button>
+
+						{#if showMoveMenu}
+							<div class="move-menu-open absolute right-0 top-full z-20 mt-1 w-56 rounded-lg border border-(--color-border) bg-(--color-surface) p-2 shadow-lg">
+								<div class="mb-1 flex items-center justify-between">
+									<span class="text-xs font-medium text-(--color-text-muted)">Mover a...</span>
+								<button
+									onclick={closeMoveMenu}
+									class="rounded p-0.5 text-(--color-text-muted) hover:bg-(--color-surface-hover)"
+									aria-label="Cerrar"
+								>
+										<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+										</svg>
+									</button>
+								</div>
+
+								{#if loadingDestinations}
+									<p class="py-2 text-center text-xs text-(--color-text-muted)">Cargando...</p>
+								{:else if moveDestinations.length === 0}
+									<p class="py-2 text-center text-xs text-(--color-text-muted)">Sin destinos configurados</p>
+								{:else}
+									{#each moveDestinations as dest (dest.id)}
+										<button
+											onclick={() => handleMove(dest.id)}
+											disabled={moving}
+											class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-(--color-text) transition-colors hover:bg-(--color-surface-hover) disabled:opacity-50"
+										>
+											<svg class="h-3.5 w-3.5 shrink-0 text-(--color-text-muted)" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+											</svg>
+											<span class="truncate">{dest.name}</span>
+											<span class="ml-auto shrink-0 text-xs text-(--color-text-muted)">{dest.path}</span>
+										</button>
+									{/each}
+								{/if}
+
+								{#if moveError}
+									<p class="mt-1 text-xs text-(--color-danger)">{moveError}</p>
+								{/if}
+								{#if moveSuccess}
+									<p class="mt-1 text-xs text-(--color-success)">{moveSuccess}</p>
+								{/if}
+							</div>
+						{/if}
+					</div>
 				{/if}
 				<button
 					onclick={() => (showConfirm = true)}

@@ -22,6 +22,13 @@ export interface SearchResponse {
 	items: SearchResult[];
 }
 
+export interface Destination {
+	id: string;
+	name: string;
+	path: string;
+	created_at: string;
+}
+
 export interface Download {
 	id: number;
 	name: string;
@@ -35,6 +42,7 @@ export interface Download {
 	errorString: string;
 	isFinished: boolean;
 	doneDate: number;
+	downloadDir?: string;
 }
 
 export interface SessionStats {
