@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import type { Channel, SearchResult, SearchResponse, Download, SessionStats, Destination } from './types';
+import type { Channel, SearchResult, SearchResponse, Download, SessionStats, Destination, ChannelInfo, ChannelMessagesResponse } from './types';
 
 const xmlParser = new XMLParser({
 	ignoreAttributes: false,
@@ -34,23 +34,62 @@ function getBaseUrl(): string {
 
 export async function fetchChannels(apiKey: string): Promise<Channel[]> {
 	const base = getBaseUrl();
-	const res = await fetch(`${base}/api?t=caps`);
-	if (!res.ok) throw new Error(`Failed to fetch caps: ${res.status}`);
+	const res = await fetch(`${base}/api/v2/channels?apikey=${encodeURIComponent(apiKey)}`);
+	if (!res.ok) throw new Error(`Failed to fetch channels: ${res.status}`);
 
-	const xml = await res.text();
-	const parsed = xmlParser.parse(xml);
+	const channels = await res.json();
+	return channels.map((c: any) => ({
+		id: c.id,
+		chatId: c.chatId,
+		name: c.name,
+		username: c.username ?? undefined,
+		enabled: true
+	}));
+}
 
-	const categories = parsed?.caps?.categories?.category;
-	if (!categories) return [];
+export async function getChannelInfo(apiKey: string, chatId: number): Promise<ChannelInfo> {
+	const base = getBaseUrl();
+	const res = await fetch(`${base}/api/v2/channels/${chatId}?apikey=${encodeURIComponent(apiKey)}`);
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(body.detail || `Failed to fetch channel: ${res.status}`);
+	}
+	return res.json();
+}
 
-	const cats = Array.isArray(categories) ? categories : [categories];
-	return cats
-		.filter((c: any) => parseInt(c['@_id']) >= 1000)
-		.map((c: any) => ({
-			id: parseInt(c['@_id']),
-			name: c['@_name'],
-			enabled: true
-		}));
+export async function getChannelMessages(
+	apiKey: string,
+	chatId: number,
+	before?: number,
+	limit = 20,
+	around?: number
+): Promise<ChannelMessagesResponse> {
+	const base = getBaseUrl();
+	const url = new URL(`${base}/api/v2/channels/${chatId}/messages`, window.location.origin);
+	url.searchParams.set('apikey', apiKey);
+	url.searchParams.set('limit', String(limit));
+	if (around !== undefined) url.searchParams.set('around', String(around));
+	else if (before !== undefined) url.searchParams.set('before', String(before));
+
+	const res = await fetch(url.toString());
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(body.detail || `Failed to fetch channel messages: ${res.status}`);
+	}
+	return res.json();
+}
+
+export async function addMessageDownload(apiKey: string, chatId: number, msgId: number): Promise<any> {
+	const base = getBaseUrl();
+	const res = await fetch(
+		`${base}/api/v2/downloads?chat_id=${chatId}&msg_id=${msgId}&apikey=${encodeURIComponent(apiKey)}`,
+		{ method: 'POST' }
+	);
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(body.detail || `Failed to add download: ${res.status}`);
+	}
+	return res.json();
 }
 
 // --- Search ---

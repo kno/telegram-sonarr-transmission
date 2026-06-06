@@ -3,7 +3,13 @@
 	import { formatSize, formatDate, addDownload } from '$lib/api';
 	import { settings } from '$lib/stores.svelte';
 
-	let { result, channelName }: { result: SearchResult; channelName?: string } = $props();
+	let { result, channelName, channelChatId }: { result: SearchResult; channelName?: string; channelChatId?: number } = $props();
+	let foundMessageId = $derived(result.guid.match(/^-?\d+:(\d+)$/)?.[1]);
+	let channelHref = $derived(
+		channelChatId === undefined
+			? ''
+			: `/channels/${channelChatId}${foundMessageId ? `?message=${foundMessageId}` : ''}`
+	);
 
 	let downloading = $state(false);
 	let downloaded = $state(false);
@@ -42,9 +48,15 @@
 	<div class="flex items-center justify-between">
 		<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-(--color-text-muted)">
 			{#if channelName}
-				<span class="rounded bg-(--color-primary)/10 px-1.5 py-0.5 text-xs font-medium text-(--color-primary)">
-					{channelName}
-				</span>
+				{#if channelChatId !== undefined}
+					<a href={channelHref} class="rounded bg-(--color-primary)/10 px-1.5 py-0.5 text-xs font-medium text-(--color-primary) hover:underline">
+						{channelName}
+					</a>
+				{:else}
+					<span class="rounded bg-(--color-primary)/10 px-1.5 py-0.5 text-xs font-medium text-(--color-primary)">
+						{channelName}
+					</span>
+				{/if}
 			{/if}
 			<span>{formatDate(result.pubDate)}</span>
 			{#if result.link}

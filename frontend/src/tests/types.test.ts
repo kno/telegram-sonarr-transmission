@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { TR_STATUS } from '$lib/types';
+import type { Channel, ChannelInfo, ChannelMessage, ChannelMessagesResponse } from '$lib/types';
 
 describe('TR_STATUS constants', () => {
 	it('has correct status values', () => {
@@ -20,5 +21,35 @@ describe('TR_STATUS constants', () => {
 		// TypeScript enforces this at compile time, but we verify at runtime
 		const values = Object.values(TR_STATUS);
 		expect(values).toEqual([0, 1, 2, 3, 4, 5, 6]);
+	});
+});
+
+describe('channel browser types', () => {
+	it('Channel includes Telegram chat id', () => {
+		const channel: Channel = { id: 1000, chatId: -1001234, name: 'Series', enabled: true };
+
+		expect(channel.chatId).toBe(-1001234);
+	});
+
+	it('ChannelMessagesResponse carries messages, cursor, and channel metadata', () => {
+		const info: ChannelInfo = { id: -1001234, title: 'Series', participants_count: 10 };
+		const message: ChannelMessage = {
+			message_id: 123,
+			date: '2025-06-01T14:30:00+00:00',
+			filename: 'Show.S01E01.mkv',
+			file_size: 1024,
+			mime_type: 'video/x-matroska',
+			media_group_id: null
+		};
+		const response: ChannelMessagesResponse = {
+			messages: [message],
+			has_more: true,
+			next_cursor: 123,
+			channel: info
+		};
+
+		expect(response.messages[0].filename).toBe('Show.S01E01.mkv');
+		expect(response.next_cursor).toBe(123);
+		expect(response.channel.title).toBe('Series');
 	});
 });

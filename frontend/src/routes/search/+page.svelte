@@ -19,7 +19,9 @@
 	let channelsRequested = false;
 	$effect(() => {
 		if (channelsRequested) return;
-		if (!settings.configured || channelsStore.channels.length > 0) return;
+		const channelsNeedRefresh =
+			channelsStore.channels.length === 0 || channelsStore.channels.some((channel) => typeof channel.chatId !== 'number');
+		if (!settings.configured || !channelsNeedRefresh) return;
 		channelsRequested = true;
 		fetchChannels(settings.apiKey)
 			.then((ch) => channelsStore.setChannels(ch))
@@ -69,9 +71,7 @@
 	const hasMore = $derived(offset + limit < total);
 	const hasPrev = $derived(offset > 0);
 
-	const channelMap = $derived(
-		new Map(channelsStore.channels.map((c) => [c.id, c.name]))
-	);
+	const channelMap = $derived(new Map(channelsStore.channels.map((c) => [c.id, c])));
 </script>
 
 <svelte:head>
@@ -134,7 +134,8 @@
 
 	<div class="grid gap-3">
 		{#each results as result (result.guid)}
-			<SearchResultCard {result} channelName={channelMap.get(result.categoryId)} />
+			{@const channel = channelMap.get(result.categoryId)}
+			<SearchResultCard {result} channelName={channel?.name} channelChatId={channel?.chatId} />
 		{/each}
 	</div>
 

@@ -1,8 +1,37 @@
 export interface Channel {
 	id: number;
+	chatId?: number;
 	name: string;
 	username?: string;
 	enabled: boolean;
+}
+
+export interface ChannelInfo {
+	id: number;
+	title: string;
+	username?: string | null;
+	participants_count?: number | null;
+	description?: string | null;
+}
+
+export interface ChannelMessage {
+	message_id: number;
+	date: string | null;
+	filename: string | null;
+	file_size: number;
+	mime_type: string;
+	media_group_id: string | null;
+	text?: string | null;
+	caption?: string | null;
+	body?: string | null;
+	thumbnail_url?: string | null;
+}
+
+export interface ChannelMessagesResponse {
+	messages: ChannelMessage[];
+	has_more: boolean;
+	next_cursor: number | null;
+	channel: ChannelInfo;
 }
 
 export interface SearchResult {

@@ -157,6 +157,33 @@ describe('SearchResultCard', () => {
 		expect(screen.getByText('MyChannel')).toBeInTheDocument();
 	});
 
+	it('renders channel badge as link when chat id is provided', () => {
+		render(SearchResultCard, {
+			props: { result: makeSearchResult({ guid: 'legacy-guid' }), channelName: 'MyChannel', channelChatId: -1001234 }
+		});
+
+		const link = screen.getByRole('link', { name: 'MyChannel' });
+		expect(link.getAttribute('href')).toBe('/channels/-1001234');
+	});
+
+	it('includes found message id in channel link when result guid contains chat and message ids', () => {
+		render(SearchResultCard, {
+			props: { result: makeSearchResult({ guid: '-1001234:251258' }), channelName: 'MyChannel', channelChatId: -1001234 }
+		});
+
+		const link = screen.getByRole('link', { name: 'MyChannel' });
+		expect(link.getAttribute('href')).toBe('/channels/-1001234?message=251258');
+	});
+
+	it('keeps channel badge non-link when chat id is missing', () => {
+		render(SearchResultCard, {
+			props: { result: makeSearchResult(), channelName: 'MyChannel' }
+		});
+
+		expect(screen.queryByRole('link', { name: 'MyChannel' })).toBeNull();
+		expect(screen.getByText('MyChannel')).toBeInTheDocument();
+	});
+
 	it('does not render channel name when not provided', () => {
 		const { container } = render(SearchResultCard, {
 			props: { result: makeSearchResult() }

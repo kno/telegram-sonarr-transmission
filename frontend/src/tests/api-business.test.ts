@@ -21,7 +21,10 @@ import {
 	deleteDestination,
 	browseFilesystem,
 	moveDownload,
-	bulkMoveDownloads
+	bulkMoveDownloads,
+	getChannelInfo,
+	getChannelMessages,
+	addMessageDownload
 } from '$lib/api';
 
 // --- localStorage mock ---
@@ -75,37 +78,30 @@ describe('saveSettings', () => {
 // --- fetchChannels ---
 
 describe('fetchChannels', () => {
-	it('parses caps XML and returns channels with id >= 1000', async () => {
-		const capsXml = `<?xml version="1.0"?>
-<caps>
-  <categories>
-    <category id="100" name="General"/>
-    <category id="500" name="Other"/>
-    <category id="1000" name="TestChannel"/>
-    <category id="1001" name="AnotherChannel"/>
-  </categories>
-</caps>`;
-
+	it('fetches API v2 channels with chat ids', async () => {
 		vi.stubGlobal(
 			'fetch',
 			vi.fn().mockResolvedValue({
 				ok: true,
-				text: () => Promise.resolve(capsXml)
+				json: () => Promise.resolve([
+					{ id: 1000, chatId: -1001234, name: 'TestChannel', username: 'test' },
+					{ id: 1001, chatId: -1005678, name: 'AnotherChannel', username: null }
+				])
 			})
 		);
 
 		const channels = await fetchChannels('testkey');
 		expect(channels).toHaveLength(2);
-		expect(channels[0]).toEqual({ id: 1000, name: 'TestChannel', enabled: true });
-		expect(channels[1]).toEqual({ id: 1001, name: 'AnotherChannel', enabled: true });
+		expect(channels[0]).toEqual({ id: 1000, chatId: -1001234, name: 'TestChannel', username: 'test', enabled: true });
+		expect(channels[1]).toEqual({ id: 1001, chatId: -1005678, name: 'AnotherChannel', username: undefined, enabled: true });
 	});
 
-	it('returns empty array when no categories', async () => {
+	it('returns empty array when no channels', async () => {
 		vi.stubGlobal(
 			'fetch',
 			vi.fn().mockResolvedValue({
 				ok: true,
-				text: () => Promise.resolve('<caps></caps>')
+				json: () => Promise.resolve([])
 			})
 		);
 
@@ -119,28 +115,88 @@ describe('fetchChannels', () => {
 			vi.fn().mockResolvedValue({ ok: false, status: 500 })
 		);
 
-		await expect(fetchChannels('testkey')).rejects.toThrow('Failed to fetch caps: 500');
+		await expect(fetchChannels('testkey')).rejects.toThrow('Failed to fetch channels: 500');
 	});
 
-	it('handles single category (not array)', async () => {
-		const capsXml = `<?xml version="1.0"?>
-<caps>
-  <categories>
-    <category id="1000" name="OnlyChannel"/>
-  </categories>
-</caps>`;
+	it('builds API v2 URL with encoded API key', async () => {
+		const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve([]) });
+		vi.stubGlobal('fetch', mockFetch);
 
-		vi.stubGlobal(
-			'fetch',
-			vi.fn().mockResolvedValue({
-				ok: true,
-				text: () => Promise.resolve(capsXml)
-			})
-		);
+		await fetchChannels('key with spaces');
 
-		const channels = await fetchChannels('testkey');
-		expect(channels).toHaveLength(1);
-		expect(channels[0].name).toBe('OnlyChannel');
+		expect(mockFetch.mock.calls[0][0]).toBe('/api/v2/channels?apikey=key%20with%20spaces');
+	});
+});
+
+describe('channel browser API', () => {
+	it('getChannelInfo fetches metadata by chat id', async () => {
+		const info = { id: -1001234, title: 'Series', username: 'series', participants_count: 50, description: 'HD' };
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(info) }));
+
+		const result = await getChannelInfo('key', -1001234);
+
+		expect(result).toEqual(info);
+	});
+
+	it('getChannelMessages builds URL without cursor', async () => {
+		const response = { messages: [], has_more: false, next_cursor: null, channel: { id: -1001234, title: 'Series' } };
+		const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(response) });
+		vi.stubGlobal('fetch', mockFetch);
+
+		const result = await getChannelMessages('key', -1001234, undefined, 20);
+
+		expect(result).toEqual(response);
+		expect(mockFetch.mock.calls[0][0]).toContain('/api/v2/channels/-1001234/messages');
+		expect(mockFetch.mock.calls[0][0]).toContain('apikey=key');
+		expect(mockFetch.mock.calls[0][0]).toContain('limit=20');
+		expect(mockFetch.mock.calls[0][0]).not.toContain('before=');
+	});
+
+	it('getChannelMessages includes cursor when provided', async () => {
+		const mockFetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve({ messages: [], has_more: false, next_cursor: null, channel: { id: -1001234, title: 'Series' } })
+		});
+		vi.stubGlobal('fetch', mockFetch);
+
+		await getChannelMessages('key', -1001234, 251240, 10);
+
+		expect(mockFetch.mock.calls[0][0]).toContain('before=251240');
+		expect(mockFetch.mock.calls[0][0]).toContain('limit=10');
+	});
+
+	it('getChannelMessages includes around message when provided', async () => {
+		const mockFetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve({ messages: [], has_more: false, next_cursor: null, channel: { id: -1001234, title: 'Series' } })
+		});
+		vi.stubGlobal('fetch', mockFetch);
+
+		await getChannelMessages('key', -1001234, undefined, 20, 251258);
+
+		expect(mockFetch.mock.calls[0][0]).toContain('around=251258');
+		expect(mockFetch.mock.calls[0][0]).not.toContain('before=');
+	});
+
+	it('getChannelMessages throws retryable status details', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+			ok: false,
+			status: 429,
+			json: () => Promise.resolve({ detail: 'Telegram rate limit, retry later' })
+		}));
+
+		await expect(getChannelMessages('key', -1001234)).rejects.toThrow('Telegram rate limit, retry later');
+	});
+
+	it('addMessageDownload posts chat_id and msg_id', async () => {
+		const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ status: 'added' }) });
+		vi.stubGlobal('fetch', mockFetch);
+
+		const result = await addMessageDownload('key', -1001234, 99);
+
+		expect(result.status).toBe('added');
+		expect(mockFetch.mock.calls[0][0]).toBe('/api/v2/downloads?chat_id=-1001234&msg_id=99&apikey=key');
+		expect(mockFetch.mock.calls[0][1].method).toBe('POST');
 	});
 });
 
