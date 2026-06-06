@@ -353,17 +353,29 @@ export async function moveDownload(apiKey: string, downloadId: number, destinati
 }
 
 export async function bulkMoveDownloads(apiKey: string, ids: number[], destinationId: string): Promise<any> {
-	const base = getBaseUrl();
-	const res = await fetch(`${base}/api/v2/downloads/bulk-move?apikey=${encodeURIComponent(apiKey)}`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ ids, destination_id: destinationId }),
-	});
-	if (!res.ok) {
-		const body = await res.json().catch(() => ({}));
-		throw new Error(body.detail || `Bulk move failed: ${res.status}`);
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 30000);
+	try {
+		const base = getBaseUrl();
+		const res = await fetch(`${base}/api/v2/downloads/bulk-move?apikey=${encodeURIComponent(apiKey)}`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ ids, destination_id: destinationId }),
+			signal: controller.signal,
+		});
+		if (!res.ok) {
+			const body = await res.json().catch(() => ({}));
+			throw new Error(body.detail || `Bulk move failed: ${res.status}`);
+		}
+		return res.json();
+	} catch (e: any) {
+		if (e.name === 'AbortError') {
+			throw new Error('La operación tardó demasiado. Intente de nuevo con menos archivos.');
+		}
+		throw e;
+	} finally {
+		clearTimeout(timeout);
 	}
-	return res.json();
 }
 
 // --- Utilities ---

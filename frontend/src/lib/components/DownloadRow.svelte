@@ -325,4 +325,9 @@
 	<div class="mt-1 text-right text-xs text-(--color-text-muted)">
 		{(download.percentDone * 100).toFixed(1)}%
 	</div>
+	{#if download.downloadDir}
+		<div class="mt-0.5 text-right text-xs text-(--color-text-muted)">
+			{download.downloadDir}
+		</div>
+	{/if}
 </div>
