@@ -39,13 +39,13 @@ Chain strategy: pending
 
 ## Phase 2: Backend API & Transmission
 
-- [ ] 2.1 `app/api_v2/router.py` — add: `GET /api/v2/folders`, `POST /api/v2/folders`, `DELETE /api/v2/folders/{id}`, `GET /api/v2/browse?path=`, `POST /api/v2/downloads/{id}/move`, `POST /api/v2/downloads/bulk-move`
-- [ ] 2.2 `app/transmission/handlers.py` — `torrent-set`: implement `location` arg (pending = update downloadDir only; done = move file + update state + `_file_path`)
-- [ ] 2.3 `app/transmission/handlers.py` — `torrent-add`: respect `download-dir` from args if matches configured destination, else fallback to DOWNLOAD_DIR
-- [ ] 2.4 `app/transmission/downloader.py` — on completion, set `_file_path` to `os.path.join(downloadDir, name)`
-- [ ] 2.5 `tests/api_v2/test_router.py` — folder CRUD, browse, move, bulk-move via async_client
-- [ ] 2.6 `tests/transmission/test_handlers.py` — torrent-set location (pending vs done, nonexistent torrent), torrent-add download-dir matching
-- [ ] 2.7 `tests/transmission/test_downloader.py` — `_file_path` set on completion
+- [x] 2.1 `app/api_v2/router.py` — add: `GET /api/v2/folders`, `POST /api/v2/folders`, `DELETE /api/v2/folders/{id}`, `GET /api/v2/browse?path=`, `POST /api/v2/downloads/{id}/move`, `POST /api/v2/downloads/bulk-move`
+- [x] 2.2 `app/transmission/handlers.py` — `torrent-set`: implement `location` arg (pending = update downloadDir only; done = move file + update state + `file_path`)
+- [x] 2.3 `app/transmission/handlers.py` — `torrent-add`: respect `download-dir` from args if matches configured destination, else fallback to DOWNLOAD_DIR
+- [x] 2.4 `app/transmission/downloader.py` — on completion, set `file_path` to `os.path.join(downloadDir, name)`
+- [x] 2.5 `tests/api_v2/test_router.py` — folder CRUD, browse, move, bulk-move via async_client
+- [x] 2.6 `tests/transmission/test_handlers.py` — torrent-set location (pending vs done, nonexistent torrent), torrent-add download-dir matching
+- [x] 2.7 `tests/transmission/test_downloader.py` — `file_path` set on completion
 
 ## Phase 3: Frontend
 

@@ -187,16 +187,6 @@ class TestFindByChatMsg:
 # ===================================================================
 
 class TestFilePathSerialization:
-    def test_file_path_not_filtered_in_snapshot(self):
-        """_file_path should NOT start with _ when saved to state."""
-        # Wait — _file_path starts with _ but is NOT a private/transient field.
-        # The convention in state is that keys starting with _ are filtered by
-        # save_state and get_downloads_snapshot. But _file_path must be persisted.
-        # Actually looking at the design: _file_path is meant to be persisted.
-        # This means we should NOT prefix it with _ for filtering purposes.
-        # Per design: it tracks the real file path on disk.
-        pass
-
     def test_file_path_persisted_through_save_load(self, test_settings):
         """_file_path must survive a save/load roundtrip."""
         downloads = get_downloads()

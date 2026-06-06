@@ -139,11 +139,6 @@ def list_dir(path: str, show_hidden: bool = False) -> dict:
     except (ValueError, OSError):
         return {"entries": [], "error": f"Invalid path: {path}"}
 
-    # Security: if the resolved path differs from the normalized input and
-    # contains .., reject it
-    if ".." in normalized.split(os.sep):
-        return {"entries": [], "error": "Path traversal detected: resolved path contains '..'"}
-
     if not os.path.exists(normalized):
         return {"entries": [], "error": f"Path does not exist: {normalized}"}
 
