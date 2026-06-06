@@ -189,6 +189,7 @@ async def _download_from_telegram(torrent_id: int):
         info["eta"] = -1
         info["files"][0]["bytesCompleted"] = file_size
         info["fileStats"][0]["bytesCompleted"] = file_size
+        info["file_path"] = dest_path
         logger.info("Download complete: %s (%.1f MB)", filename, file_size / 1048576)
         await broadcast_downloads()
 

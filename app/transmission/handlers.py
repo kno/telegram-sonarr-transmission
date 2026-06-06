@@ -1,10 +1,12 @@
 import base64
 import logging
 import os
+import shutil
 import time
 import uuid
 
 from app.config import settings
+from app.destinations import DestinationsManager
 from app.download import _bdecode
 from app.transmission.state import get_downloads, get_next_id, save_state
 from app.transmission.downloader import enqueue_download, get_active_tasks
@@ -40,7 +42,19 @@ async def torrent_add(args):
 
     metainfo_b64 = args.get("metainfo", "")
     download_dir = settings.DOWNLOAD_DIR
-    logger.info("torrent-add args: download-dir=%r", download_dir)
+
+    # If client sends download-dir that matches a configured destination, use it
+    client_download_dir = args.get("download-dir")
+    if client_download_dir:
+        mgr = DestinationsManager()
+        dest = mgr.get_by_path(client_download_dir)
+        if dest is not None:
+            download_dir = dest.path
+            logger.info("Using configured destination: %s", dest.name)
+        else:
+            logger.info("download-dir %s does not match any destination, using default", client_download_dir)
+
+    logger.info("torrent-add download-dir=%r", download_dir)
 
     if not metainfo_b64:
         return {"torrent-duplicate": None}
@@ -235,4 +249,70 @@ async def torrent_start(args):
 
 
 async def torrent_set(args):
-    return {}
+    """Handle torrent-set method.
+
+    Supports 'location' field to move download files to a new directory.
+    - Pending download: update downloadDir only
+    - Completed download: move file on disk, update downloadDir + file_path
+    """
+    downloads = get_downloads()
+    location = args.get("location")
+
+    if location is None:
+        return {}
+
+    ids = args.get("ids")
+    if ids is None:
+        ids = list(downloads.keys())
+    elif isinstance(ids, int):
+        ids = [ids]
+
+    errors = []
+    for tid in ids:
+        info = downloads.get(tid)
+        if not info:
+            errors.append(f"Torrent #{tid} not found")
+            continue
+
+        old_dir = info["downloadDir"]
+        name = info.get("name", "")
+
+        # Same location — no-op
+        if os.path.normpath(old_dir) == os.path.normpath(location):
+            info["downloadDir"] = location
+            if name:
+                info["file_path"] = os.path.join(location, name)
+            continue
+
+        # Update downloadDir (always — even for pending)
+        info["downloadDir"] = location
+
+        # For completed downloads, move the file on disk
+        if info.get("isFinished") and name:
+            old_path = os.path.join(old_dir, name)
+            new_path = os.path.join(location, name)
+
+            if os.path.exists(old_path):
+                try:
+                    os.makedirs(location, exist_ok=True)
+                    shutil.move(old_path, new_path)
+                except (OSError, PermissionError) as e:
+                    errors.append(f"Failed to move {name}: {e}")
+                    info["downloadDir"] = old_dir
+                    continue
+            else:
+                errors.append(f"File not found: {old_path}")
+                info["downloadDir"] = old_dir
+                continue
+
+        # Set file_path for both pending and completed
+        if name:
+            info["file_path"] = os.path.join(location, name)
+
+    save_state()
+    await broadcast_downloads()
+
+    result = {}
+    if errors:
+        result["errors"] = errors
+    return result

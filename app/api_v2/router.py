@@ -7,6 +7,7 @@ import hmac
 import json
 import logging
 import os
+import shutil
 import time
 import uuid
 
@@ -15,6 +16,7 @@ from fastapi.responses import FileResponse
 
 from app.channels import get_all_channels, get_channel_by_category
 from app.config import settings
+from app.destinations import DestinationsManager, list_dir
 from app.media import extract_media_info
 from app.telegram_client import get_client
 from app.torznab.search import search_channels
@@ -34,8 +36,8 @@ router = APIRouter(prefix="/api/v2", tags=["v2"])
 
 # ── Auth ──────────────────────────────────────────────────────────────────
 
-def _verify_apikey(apikey: str = Query(..., alias="apikey")):
-    if not hmac.compare_digest(apikey, settings.TORZNAB_APIKEY):
+def _verify_apikey(apikey: str = Query("", alias="apikey")):
+    if not apikey or not hmac.compare_digest(apikey, settings.TORZNAB_APIKEY):
         raise HTTPException(status_code=401, detail="Invalid API key")
     return apikey
 
@@ -130,6 +132,198 @@ async def stats(apikey: str = Depends(_verify_apikey)):
         "torrentCount": len(downloads),
         "downloadSpeed": sum(d.get("rateDownload", 0) for d in downloads.values()),
     }
+
+
+# ── Destinations (Folders) ──────────────────────────────────────────────
+
+
+@router.get("/folders")
+async def list_folders(apikey: str = Depends(_verify_apikey)):
+    """Return all configured destination folders."""
+    mgr = DestinationsManager()
+    return [
+        {"id": d.id, "name": d.name, "path": d.path, "created_at": d.created_at}
+        for d in mgr.list()
+    ]
+
+
+@router.post("/folders", status_code=201)
+async def create_folder(
+    body: dict,
+    apikey: str = Depends(_verify_apikey),
+):
+    """Create a new destination folder."""
+    name = body.get("name", "").strip()
+    path = body.get("path", "").strip()
+    if not name or not path:
+        raise HTTPException(status_code=400, detail="name and path are required")
+    mgr = DestinationsManager()
+    try:
+        dest = mgr.add(name, path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"id": dest.id, "name": dest.name, "path": dest.path, "created_at": dest.created_at}
+
+
+@router.delete("/folders/{folder_id}", status_code=204)
+async def delete_folder(
+    folder_id: str,
+    apikey: str = Depends(_verify_apikey),
+):
+    """Delete a destination folder. Blocked if any active download uses it."""
+    mgr = DestinationsManager()
+    dest = mgr.get(folder_id)
+    if not dest:
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    # Check for active (non-finished) downloads using this destination
+    downloads = get_downloads()
+    active_using = [
+        tid for tid, info in downloads.items()
+        if info.get("downloadDir") == dest.path and not info.get("isFinished")
+    ]
+    if active_using:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Folder has {len(active_using)} active download(s). Finish or remove them first.",
+        )
+
+    mgr.remove(folder_id)
+
+
+# ── File Browser ────────────────────────────────────────────────────────
+
+
+@router.get("/browse")
+async def browse(
+    path: str = Query("/"),
+    show_hidden: bool = Query(False),
+    apikey: str = Depends(_verify_apikey),
+):
+    """Browse a directory on the server filesystem."""
+    # Reject path traversal
+    if ".." in path.split(os.sep):
+        raise HTTPException(status_code=403, detail="Path traversal detected")
+
+    result = list_dir(path, show_hidden=show_hidden)
+    if "error" in result and not result["entries"]:
+        # Permission error, nonexistent path — return 200 with error message
+        return result
+    return result
+
+
+# ── Move Downloads ──────────────────────────────────────────────────────
+
+
+@router.post("/downloads/{download_id}/move")
+async def move_download(
+    download_id: int,
+    body: dict,
+    apikey: str = Depends(_verify_apikey),
+):
+    """Move a download to a destination folder."""
+    mgr = DestinationsManager()
+    dest_id = body.get("destination_id")
+    if not dest_id:
+        raise HTTPException(status_code=400, detail="destination_id is required")
+
+    dest = mgr.get(dest_id)
+    if not dest:
+        raise HTTPException(status_code=404, detail="Destination not found")
+
+    downloads = get_downloads()
+    info = downloads.get(download_id)
+    if not info:
+        raise HTTPException(status_code=404, detail="Download not found")
+
+    old_dir = info["downloadDir"]
+    new_dir = dest.path
+    name = info.get("name", "")
+
+    # Update downloadDir always
+    info["downloadDir"] = new_dir
+
+    if info.get("isFinished") and name:
+        # Move file on disk
+        old_path = os.path.join(old_dir, name)
+        new_path = os.path.join(new_dir, name)
+        if os.path.exists(old_path):
+            try:
+                os.makedirs(new_dir, exist_ok=True)
+                shutil.move(old_path, new_path)
+            except (OSError, PermissionError) as e:
+                info["downloadDir"] = old_dir
+                save_state()
+                raise HTTPException(status_code=500, detail=f"Failed to move file: {e}")
+        else:
+            info["downloadDir"] = old_dir
+            save_state()
+            raise HTTPException(status_code=500, detail=f"File not found: {old_path}")
+
+    # Set file_path
+    if name:
+        info["file_path"] = os.path.join(new_dir, name)
+
+    save_state()
+    await broadcast_downloads()
+    return {"status": "moved"}
+
+
+@router.post("/downloads/bulk-move")
+async def bulk_move_downloads(
+    body: dict,
+    apikey: str = Depends(_verify_apikey),
+):
+    """Move multiple downloads to a destination folder."""
+    ids: list[int] = body.get("ids", [])
+    dest_id = body.get("destination_id")
+    if not ids or not dest_id:
+        raise HTTPException(status_code=400, detail="ids and destination_id are required")
+
+    mgr = DestinationsManager()
+    dest = mgr.get(dest_id)
+    if not dest:
+        raise HTTPException(status_code=404, detail="Destination not found")
+
+    downloads = get_downloads()
+    results: list[dict] = []
+    new_dir = dest.path
+
+    for tid in ids:
+        info = downloads.get(tid)
+        if not info:
+            results.append({"id": tid, "status": "error", "error": "Download not found"})
+            continue
+
+        name = info.get("name", "")
+        old_dir = info["downloadDir"]
+
+        # Update downloadDir always
+        info["downloadDir"] = new_dir
+
+        if info.get("isFinished") and name:
+            old_path = os.path.join(old_dir, name)
+            new_path = os.path.join(new_dir, name)
+            if os.path.exists(old_path):
+                try:
+                    os.makedirs(new_dir, exist_ok=True)
+                    shutil.move(old_path, new_path)
+                except (OSError, PermissionError) as e:
+                    info["downloadDir"] = old_dir
+                    results.append({"id": tid, "status": "error", "error": str(e)})
+                    continue
+            else:
+                info["downloadDir"] = old_dir
+                results.append({"id": tid, "status": "error", "error": "File not found"})
+                continue
+
+        if name:
+            info["file_path"] = os.path.join(new_dir, name)
+        results.append({"id": tid, "status": "moved"})
+
+    save_state()
+    await broadcast_downloads()
+    return {"results": results}
 
 
 @router.post("/downloads")

@@ -87,6 +87,23 @@ class TestDownloadFromTelegram:
         assert downloads[1]["isFinished"] is True
         assert downloads[1]["percentDone"] == 1.0
         assert os.path.exists(os.path.join(download_dir, "video.mkv"))
+        assert downloads[1]["file_path"] == os.path.join(download_dir, "video.mkv")
+
+    async def test_file_path_not_set_on_failure(self, test_settings, mock_telegram_client):
+        """file_path should not be set when download fails."""
+        mock_telegram_client.get_messages = AsyncMock(side_effect=Exception("Network error"))
+
+        downloads = get_downloads()
+        downloads[1] = {
+            "id": 1, "chat_id": "-100", "msg_id": 1,
+            "name": "test", "downloadDir": "/tmp/test",
+            "status": 4, "_start_time": 0,
+        }
+
+        await _download_from_telegram(1)
+        assert downloads[1]["error"] == 1
+        assert "Network error" in downloads[1]["errorString"]
+        assert downloads[1].get("file_path") is None
 
     async def test_no_document(self, test_settings, mock_telegram_client, mock_message):
         msg = mock_message(has_document=False)

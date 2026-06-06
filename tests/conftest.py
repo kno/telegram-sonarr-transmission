@@ -33,6 +33,7 @@ def test_settings(tmp_path, monkeypatch):
     monkeypatch.setenv("BASE_URL", "http://localhost:9117")
     monkeypatch.setenv("DOWNLOAD_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv("CHANNELS_FILE", str(tmp_path / "channels.json"))
+    monkeypatch.setenv("DESTINATIONS_FILE", str(tmp_path / "destinations.json"))
     monkeypatch.setenv("SESSION_DIR", str(tmp_path))
     monkeypatch.setenv("SESSION_NAME", "test_session")
 
@@ -192,12 +193,14 @@ def test_app(test_settings, mock_telegram_client, populated_channels, clean_down
     from app.download import router as download_router
     from app.stream import router as stream_router
     from app.transmission.router import router as transmission_router
+    from app.api_v2.router import router as api_v2_router
 
     app = FastAPI()
     app.include_router(torznab_router)
     app.include_router(download_router)
     app.include_router(stream_router)
     app.include_router(transmission_router)
+    app.include_router(api_v2_router)
 
     @app.get("/health")
     async def health():
