@@ -66,7 +66,7 @@ class TestEnqueueDownload:
 class TestDownloadFromTelegram:
     async def test_success(self, test_settings, mock_telegram_client, mock_message, tmp_path):
         msg = mock_message(msg_id=1, file_name="video.mkv", file_size=10)
-        mock_telegram_client.get_messages = AsyncMock(return_value=msg)
+        mock_telegram_client.get_download_message = AsyncMock(return_value=msg)
 
         async def fake_stream(message, offset=0):
             yield b"0123456789"
@@ -91,7 +91,7 @@ class TestDownloadFromTelegram:
 
     async def test_file_path_not_set_on_failure(self, test_settings, mock_telegram_client):
         """file_path should not be set when download fails."""
-        mock_telegram_client.get_messages = AsyncMock(side_effect=Exception("Network error"))
+        mock_telegram_client.get_download_message = AsyncMock(side_effect=Exception("Network error"))
 
         downloads = get_downloads()
         downloads[1] = {
@@ -107,7 +107,7 @@ class TestDownloadFromTelegram:
 
     async def test_no_document(self, test_settings, mock_telegram_client, mock_message):
         msg = mock_message(has_document=False)
-        mock_telegram_client.get_messages = AsyncMock(return_value=msg)
+        mock_telegram_client.get_download_message = AsyncMock(return_value=msg)
 
         downloads = get_downloads()
         downloads[1] = {
@@ -121,7 +121,7 @@ class TestDownloadFromTelegram:
         assert downloads[1]["status"] == 0
 
     async def test_error_handling(self, test_settings, mock_telegram_client):
-        mock_telegram_client.get_messages = AsyncMock(side_effect=Exception("Network error"))
+        mock_telegram_client.get_download_message = AsyncMock(side_effect=Exception("Network error"))
 
         downloads = get_downloads()
         downloads[1] = {
@@ -137,7 +137,7 @@ class TestDownloadFromTelegram:
 
     async def test_resume_with_tmp(self, test_settings, mock_telegram_client, mock_message, tmp_path):
         msg = mock_message(msg_id=1, file_name="video.mkv", file_size=2 * 1024 * 1024)
-        mock_telegram_client.get_messages = AsyncMock(return_value=msg)
+        mock_telegram_client.get_download_message = AsyncMock(return_value=msg)
 
         download_dir = str(tmp_path / "dl")
         os.makedirs(download_dir, exist_ok=True)
@@ -170,7 +170,7 @@ class TestDownloadFromTelegram:
     async def test_stale_tmp_removed(self, test_settings, mock_telegram_client, mock_message, tmp_path):
         # tmp file larger than actual file size -> should be removed
         msg = mock_message(msg_id=1, file_name="video.mkv", file_size=100)
-        mock_telegram_client.get_messages = AsyncMock(return_value=msg)
+        mock_telegram_client.get_download_message = AsyncMock(return_value=msg)
 
         download_dir = str(tmp_path / "dl")
         os.makedirs(download_dir, exist_ok=True)

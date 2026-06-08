@@ -70,7 +70,7 @@ class TestStreamRouter:
 
     async def test_fallback_downloads_from_telegram(self, async_client, test_settings, mock_telegram_client, mock_message, tmp_path):
         msg = mock_message(msg_id=42, file_name="video.mkv", file_size=100)
-        mock_telegram_client.get_messages = AsyncMock(return_value=msg)
+        mock_telegram_client.get_download_message = AsyncMock(return_value=msg)
 
         # download_media should create the file
         cache_dir = tmp_path / "cache"
@@ -106,7 +106,7 @@ class TestStreamRouter:
         assert root.get("code") == "201"
 
     async def test_message_not_found(self, async_client, mock_telegram_client):
-        mock_telegram_client.get_messages = AsyncMock(side_effect=Exception("Error"))
+        mock_telegram_client.get_download_message = AsyncMock(side_effect=Exception("Error"))
         resp = await async_client.get("/api/stream", params={
             "id": "-100:42",
             "apikey": "testapikey",
@@ -116,7 +116,7 @@ class TestStreamRouter:
 
     async def test_no_document(self, async_client, mock_telegram_client, mock_message):
         msg = mock_message(has_document=False)
-        mock_telegram_client.get_messages = AsyncMock(return_value=msg)
+        mock_telegram_client.get_download_message = AsyncMock(return_value=msg)
         resp = await async_client.get("/api/stream", params={
             "id": "-100:42",
             "apikey": "testapikey",

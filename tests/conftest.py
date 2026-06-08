@@ -1,4 +1,3 @@
-import asyncio
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -7,14 +6,6 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.config import get_settings, Settings
-
-# Python 3.12+ compatibility: ensure an event loop exists at import time
-# for Pyrogram which calls asyncio.get_event_loop() in its module init.
-try:
-    asyncio.get_running_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
 
 # ---------------------------------------------------------------------------
 # Settings fixture — isolated from .env file
@@ -62,10 +53,11 @@ def test_settings(tmp_path, monkeypatch):
 
 @pytest.fixture
 def mock_telegram_client(monkeypatch):
-    """AsyncMock standing in for pyrogram.Client."""
+    """AsyncMock standing in for the app-owned Telegram adapter."""
     client = AsyncMock()
     client.get_me = AsyncMock(return_value=MagicMock(first_name="Test", username="testbot"))
     client.get_messages = AsyncMock()
+    client.get_download_message = AsyncMock()
     client.get_chat = AsyncMock()
     async def _empty_chat_history(*args, **kwargs):
         if False:

@@ -6,9 +6,9 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-# Stage 2: Build Python dependencies (C extensions need gcc + headers)
+# Stage 2: Build Python dependencies
 FROM python:3.12-alpine AS python-deps
-RUN apk add --no-cache gcc musl-dev libuv-dev
+RUN apk add --no-cache gcc musl-dev libuv-dev cargo
 COPY requirements.txt .
 RUN python3 -m venv /venv && \
     /venv/bin/pip install --no-cache-dir -r requirements.txt

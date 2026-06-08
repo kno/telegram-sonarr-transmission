@@ -608,7 +608,7 @@ class TestEdgeCasesAndErrorPaths:
     async def test_pairing_handles_empty_next_message(
         self, test_settings, mock_telegram_client, populated_channels, mock_message
     ):
-        # Pyrogram returns an "empty" message marker when the slot is deleted.
+        # Telegram backends can return an "empty" message marker when the slot is deleted.
         text_msg = mock_message(msg_id=100, has_document=False, text="title")
         empty_next = MagicMock()
         empty_next.empty = True
@@ -705,3 +705,41 @@ class TestHttpEndpointCallCount:
         # 2 channels in populated_channels → exactly 2 calls.
         assert len(tracker.calls) == 2
         assert all(q == "the last spark of hope" for _, q in tracker.calls)
+
+    async def test_http_search_result_download_url_fetches_paired_torrent(
+        self, async_client, mock_telegram_client, mock_message, test_settings
+    ):
+        text_msg = mock_message(msg_id=251257, has_document=False, text="The Last Spark of Hope")
+        media_msg = mock_message(
+            msg_id=251258,
+            file_name="The.Last.Spark.of.Hope.S01E01.mkv",
+            file_size=4096,
+            mime_type="video/x-matroska",
+        )
+
+        def search_messages(chat_id, query, limit):
+            async def gen():
+                if chat_id == -1001234:
+                    yield text_msg
+
+            return gen()
+
+        mock_telegram_client.search_messages = MagicMock(side_effect=search_messages)
+        mock_telegram_client.get_messages = AsyncMock(return_value=media_msg)
+
+        search_resp = await async_client.get(
+            "/api",
+            params={
+                "t": "search",
+                "q": "last spark",
+                "apikey": test_settings.TORZNAB_APIKEY,
+            },
+        )
+        root = ET.fromstring(search_resp.content.decode())
+        enclosure = root.find(".//item/enclosure")
+        assert enclosure is not None
+
+        torrent_resp = await async_client.get(enclosure.get("url").replace(str(test_settings.BASE_URL), ""))
+
+        assert torrent_resp.status_code == 200
+        assert torrent_resp.headers["content-type"] == "application/x-bittorrent"

@@ -35,7 +35,7 @@ python3 -m pytest tests/torznab/ -v
 python3 -m pytest tests/transmission/ -v
 ```
 
-- 196 tests across 16 files, 92% overall coverage
+- 372 tests across 23 files, 85% overall coverage
 - Uses `pytest` + `pytest-asyncio` + `httpx` (AsyncClient for FastAPI)
 - All Telegram API calls mocked via `AsyncMock` (no real connection needed)
 - Filesystem tests use pytest `tmp_path` fixture
@@ -47,9 +47,9 @@ No linter is configured.
 
 ## Architecture
 
-The app is a single FastAPI service (`app/main:app`) with four routers:
+The app is a single FastAPI service (`app/main:app`) with five routers:
 
-1. **Torznab API** (`app/torznab/`) — `/api` endpoint implementing the Torznab/Newznab XML protocol. Sonarr/Prowlarr query this to search for content. Search hits Telegram channels concurrently (throttled to 3 via semaphore) and returns RSS XML.
+1. **Torznab API** (`app/torznab/`) — `/api` endpoint implementing the Torznab/Newznab XML protocol. Sonarr/Prowlarr query this to search for content. Search hits Telegram channels concurrently (throttled to 2 via semaphore) and returns RSS XML.
 
 2. **Download** (`app/download.py`) — `/api/download` returns a minimal synthetic `.torrent` file. The torrent embeds `chat_id:msg_id` in its comment field (no real BitTorrent data). Includes custom bencode/bdecode implementations.
 
@@ -65,7 +65,7 @@ Sonarr search → Torznab `/api?t=search` → searches Telegram channels → ret
 
 ### Shared state
 
-- `app/telegram_client.py` — singleton Pyrogram client, connected at startup
+- `app/telegram_client.py` — singleton Telethon adapter, connected at startup
 - `app/channels.py` — in-memory channel registry with JSON persistence; auto-discovers from Telegram on first run
 - `app/config.py` — `pydantic-settings` config with lazy proxy (`settings` import works at module level without triggering validation)
 - `app/transmission/state.py` — in-memory download state (`_downloads` dict), persisted to `downloads.json`

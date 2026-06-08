@@ -16,10 +16,14 @@ export interface ChannelInfo {
 
 export interface ChannelMessage {
 	message_id: number;
+	topic_id?: number | null;
+	telegram_url: string;
+	sender_name?: string | null;
 	date: string | null;
 	filename: string | null;
-	file_size: number;
-	mime_type: string;
+	file_size: number | null;
+	mime_type: string | null;
+	downloadable: boolean;
 	media_group_id: string | null;
 	text?: string | null;
 	caption?: string | null;
@@ -29,8 +33,11 @@ export interface ChannelMessage {
 
 export interface ChannelMessagesResponse {
 	messages: ChannelMessage[];
-	has_more: boolean;
-	next_cursor: number | null;
+	has_older: boolean;
+	older_cursor: number | null;
+	has_newer: boolean;
+	newer_cursor: number | null;
+	topic_id?: number | null;
 	channel: ChannelInfo;
 }
 

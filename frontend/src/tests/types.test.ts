@@ -35,21 +35,28 @@ describe('channel browser types', () => {
 		const info: ChannelInfo = { id: -1001234, title: 'Series', participants_count: 10 };
 		const message: ChannelMessage = {
 			message_id: 123,
+			topic_id: 900,
+			telegram_url: 'https://t.me/c/1234/123',
+			sender_name: 'Uploader',
 			date: '2025-06-01T14:30:00+00:00',
 			filename: 'Show.S01E01.mkv',
 			file_size: 1024,
 			mime_type: 'video/x-matroska',
+			downloadable: true,
 			media_group_id: null
 		};
 		const response: ChannelMessagesResponse = {
 			messages: [message],
-			has_more: true,
-			next_cursor: 123,
+			has_older: true,
+			older_cursor: 123,
+			has_newer: false,
+			newer_cursor: null,
+			topic_id: 900,
 			channel: info
 		};
 
 		expect(response.messages[0].filename).toBe('Show.S01E01.mkv');
-		expect(response.next_cursor).toBe(123);
+		expect(response.older_cursor).toBe(123);
 		expect(response.channel.title).toBe('Series');
 	});
 });

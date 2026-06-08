@@ -19,6 +19,13 @@ def _media(file_name="file.mkv", file_size=1234, mime_type="video/x-matroska"):
     return SimpleNamespace(file_name=file_name, file_size=file_size, mime_type=mime_type)
 
 
+def _wrapped_telethon_media(file_name="wrapped.mkv", file_size=4096, mime_type="video/x-matroska"):
+    return SimpleNamespace(
+        raw=SimpleNamespace(),
+        file=SimpleNamespace(name=file_name, size=file_size, mime_type=mime_type),
+    )
+
+
 def test_get_media_prefers_document_then_video_audio_photo():
     document = _media("doc.mkv")
     video = _media("video.mp4")
@@ -37,6 +44,12 @@ def test_extract_media_info_supports_audio_and_photo():
 
     assert audio_info == {"filename": "song.flac", "size": 4096, "mime_type": "audio/flac"}
     assert photo_info == {"filename": None, "size": 2048, "mime_type": "image/jpeg"}
+
+
+def test_extract_media_info_supports_wrapped_telethon_file_metadata():
+    info = extract_media_info(_message(document=_wrapped_telethon_media()))
+
+    assert info == {"filename": "wrapped.mkv", "size": 4096, "mime_type": "video/x-matroska"}
 
 
 def test_extract_media_info_excludes_text_and_stickers():

@@ -11,7 +11,7 @@ from app.transmission.websocket import broadcast_downloads, get_ws_clients
 
 logger = logging.getLogger(__name__)
 
-STREAM_CHUNK_SIZE = 1024 * 1024  # 1MB — Pyrogram's stream_media chunk size
+STREAM_CHUNK_SIZE = 1024 * 1024  # 1 MiB adapter stream_media chunk size
 
 _active_tasks: dict[int, asyncio.Task] = {}
 _download_queue: asyncio.Queue | None = None
@@ -80,7 +80,7 @@ async def _download_from_telegram(torrent_id: int):
 
     try:
         client = get_client()
-        message = await client.get_messages(int(info["chat_id"]), info["msg_id"])
+        message = await client.get_download_message(int(info["chat_id"]), info["msg_id"])
 
         media_info = extract_media_info(message)
         if not media_info:
@@ -163,7 +163,7 @@ async def _download_from_telegram(torrent_id: int):
 
         chunk_offset = downloaded // STREAM_CHUNK_SIZE
         logger.info(
-            "Downloading %s (%.1f MB) via Pyrogram stream_media, offset chunk %d",
+            "Downloading %s (%.1f MB) via Telegram adapter stream_media, offset chunk %d",
             filename, file_size / 1048576, chunk_offset,
         )
 

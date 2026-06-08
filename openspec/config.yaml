@@ -6,7 +6,7 @@ context: |
   Telegram-to-Torznab bridge: exposes Telegram channels as a Torznab-compatible
   indexer (Sonarr/Radarr/Prowlarr) and emulates a Transmission RPC server.
 
-  Backend: Python 3.12+ / FastAPI / Pyrogram / pydantic-settings / torf.
+  Backend: Python 3.12+ / FastAPI / Telethon / pydantic-settings / torf.
   Frontend: SvelteKit 2 + Svelte 5 runes + Tailwind CSS 4 + TypeScript + Vite 6.
 
   Architecture: single FastAPI service with 5 routers (torznab, download, stream,

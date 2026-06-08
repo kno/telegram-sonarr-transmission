@@ -6,18 +6,19 @@ Exponer los mensajes con archivos de un canal de Telegram como un endpoint REST 
 
 ## Requisitos
 
-### Requisito: GET `/api/v2/channels/{chatId}/messages`
+### Requirement: GET `/api/v2/channels/{chatId}/messages`
 
-El sistema DEBE exponer un endpoint `GET /api/v2/channels/{chatId}/messages` autenticado vía API key que retorne mensajes con media de un canal de Telegram.
+The system MUST expose an API-key-authenticated `GET /api/v2/channels/{chatId}/messages` endpoint returning media messages from a Telegram channel through the configured Telegram backend, without leaking Pyrogram-specific session or error assumptions.
+(Previously: the endpoint explicitly reported a disconnected Pyrogram session.)
 
-**Parámetros de request:**
-| Parámetro | Tipo | Default | Máximo | Descripción |
-|-----------|------|---------|--------|-------------|
-| `chatId` (path) | `int` | — | — | ID numérico del canal Telegram |
-| `before` (query) | `int?` | — | — | Cursor: message_id del último mensaje de la página anterior |
-| `limit` (query) | `int` | 20 | 50 | Cantidad de mensajes por página |
+**Request parameters:**
+| Parameter | Type | Default | Max | Description |
+|-----------|------|---------|-----|-------------|
+| `chatId` (path) | `int` | — | — | Numeric Telegram channel ID |
+| `before` (query) | `int?` | — | — | Cursor: message_id of the last message on the previous page |
+| `limit` (query) | `int` | 20 | 50 | Number of messages per page |
 
-**Respuesta 200 OK:**
+**Response 200 OK:**
 ```json
 {
   "messages": [
@@ -42,72 +43,70 @@ El sistema DEBE exponer un endpoint `GET /api/v2/channels/{chatId}/messages` aut
 }
 ```
 
-**Errores:**
-| Código | Condición |
-|--------|-----------|
-| 401 | API key inválida o ausente |
-| 404 | Canal no encontrado o sin acceso |
-| 422 | `chatId` no es entero válido, o `limit` > 50 |
-| 429 | Rate limit de Telegram (flood-wait) |
-| 502 | Sesión Pyrogram desconectada |
+**Errors:**
+| Code | Condition |
+|------|-----------|
+| 401 | Invalid or missing API key |
+| 404 | Channel not found or inaccessible |
+| 422 | `chatId` not a valid integer, or `limit` > 50 |
+| 429 | Telegram rate limit (flood-wait) |
+| 502 | Telegram backend connection unavailable |
 
-#### Escenario: Paginación hacia atrás (happy path)
+#### Scenario: Backward pagination (happy path)
 
-- DADO un canal con más de 20 mensajes con media
-- CUANDO se solicita `GET /api/v2/channels/-1001234/messages?limit=20`
-- THEN se retornan 20 mensajes ordenados por `date` descendente
-- Y `has_more` es `true`
-- Y `next_cursor` es el `message_id` del último mensaje
+- GIVEN a channel with more than 20 media messages
+- WHEN `GET /api/v2/channels/-1001234/messages?limit=20` is requested
+- THEN 20 messages are returned sorted by descending `date`
+- AND `has_more` is `true`
+- AND `next_cursor` is the `message_id` of the last message
 
-#### Escenario: Paginación con cursor
+#### Scenario: Cursor pagination
 
-- DADO que se recibió `next_cursor: 251240`
-- CUANDO se solicita `GET /api/v2/channels/-1001234/messages?before=251240&limit=20`
-- THEN se retornan hasta 20 mensajes anteriores a `251240`
+- GIVEN `next_cursor: 251240` was returned
+- WHEN `GET /api/v2/channels/-1001234/messages?before=251240&limit=20` is requested
+- THEN up to 20 messages older than `251240` are returned
 
-#### Escenario: Sin más mensajes
+#### Scenario: No more messages
 
-- DADO un canal con menos de 20 mensajes con media
-- CUANDO se solicitan mensajes con `limit=20`
-- THEN `has_more` es `false`
-- Y `next_cursor` es `null`
+- GIVEN a channel with fewer than 20 media messages
+- WHEN messages are requested with `limit=20`
+- THEN `has_more` is `false`
+- AND `next_cursor` is `null`
 
-#### Escenario: Canal inexistente
+#### Scenario: Inaccessible channel
 
-- DADO un `chatId` que no corresponde a ningún canal accesible
-- CUANDO se solicita `GET /api/v2/channels/-1009999/messages`
-- THEN se retorna HTTP 404
-- Y el cuerpo incluye `detail` con mensaje descriptivo
+- GIVEN a `chatId` with no accessible channel
+- WHEN `GET /api/v2/channels/-1009999/messages` is requested
+- THEN HTTP 404 is returned with descriptive `detail`
 
-#### Escenario: Rate limit de Telegram
+#### Scenario: Telegram rate limit
 
-- DADO que Telegram responde con flood-wait
-- CUANDO se solicita mensajes del canal
-- THEN se retorna HTTP 429
-- Y el cuerpo incluye `detail` con `"Rate limit exceeded. Intente de nuevo en N segundos."`
+- GIVEN Telegram returns flood-wait
+- WHEN channel messages are requested
+- THEN HTTP 429 is returned with `detail` indicating retry duration in seconds
 
-#### Escenario: Sesión desconectada
+#### Scenario: Telegram backend disconnected
 
-- DADO que la sesión Pyrogram no está iniciada o falló al reconectar
-- CUANDO se solicita mensajes del canal
-- THEN se retorna HTTP 502
-- Y el cuerpo incluye `detail` con `"Conexión con Telegram perdida. Reintente."`
+- GIVEN the Telegram backend is not started or reconnect failed
+- WHEN channel messages are requested
+- THEN HTTP 502 is returned with `detail` indicating Telegram connection loss
 
-#### Escenario: `limit` excede máximo
+#### Scenario: `limit` exceeds maximum
 
-- DADO un request con `limit=100`
-- CUANDO se envía la solicitud
-- THEN se retorna HTTP 422 (validation error de FastAPI)
+- GIVEN a request with `limit=100`
+- WHEN the request is sent
+- THEN HTTP 422 is returned (FastAPI validation error)
 
-### Requisito: Semáforo de concurrencia
+### Requirement: Concurrency semaphore
 
-El sistema DEBE limitar a 2 las llamadas concurrentes a `get_chat_history()` mediante un `asyncio.Semaphore(2)` para proteger contra flood-wait de Telegram.
+The system MUST limit channel history retrieval to 2 concurrent Telegram backend calls to reduce flood-wait risk.
+(Previously: concurrency was tied to Pyrogram `get_chat_history()` calls.)
 
-#### Escenario: Tercera request concurrente
+#### Scenario: Third concurrent request
 
-- DADO que 2 requests a `get_chat_history()` están en curso
-- CUANDO llega una tercera request al mismo canal
-- THEN la tercera request espera hasta que una de las primeras dos libere el semáforo
+- GIVEN 2 channel history requests are in progress
+- WHEN a third request arrives
+- THEN it waits until one active request releases the semaphore
 
 ### Requisito: Filtro solo media
 

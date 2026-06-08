@@ -96,12 +96,10 @@ class TestImportUserChannels:
 
 class TestAutoDiscoverChannels:
     async def test_discovers(self):
-        from pyrogram.enums import ChatType
-
         dialogs = []
         for chat_type, chat_id, title, username in [
-            (ChatType.CHANNEL, -100, "Channel1", "chan1"),
-            (ChatType.SUPERGROUP, -200, "Group1", None),
+            ("channel", -100, "Channel1", "chan1"),
+            ("supergroup", -200, "Group1", None),
         ]:
             dialog = MagicMock()
             dialog.chat.type = chat_type
@@ -124,13 +122,11 @@ class TestAutoDiscoverChannels:
         assert result[1]["username"] is None
 
     async def test_filters_non_channels(self):
-        from pyrogram.enums import ChatType
-
         dialogs = []
         for chat_type, chat_id, title in [
-            (ChatType.PRIVATE, -1, "Private"),
-            (ChatType.GROUP, -2, "SmallGroup"),
-            (ChatType.CHANNEL, -3, "RealChannel"),
+            ("private", -1, "Private"),
+            ("group", -2, "SmallGroup"),
+            ("channel", -3, "RealChannel"),
         ]:
             dialog = MagicMock()
             dialog.chat.type = chat_type
@@ -162,13 +158,11 @@ class TestInitChannels:
         assert get_all_channels()[0]["name"] == "Existing"
 
     async def test_auto_discover(self, test_settings, monkeypatch):
-        from pyrogram.enums import ChatType
-
         client = AsyncMock()
 
         async def fake_get_dialogs():
             dialog = MagicMock()
-            dialog.chat.type = ChatType.CHANNEL
+            dialog.chat.type = "channel"
             dialog.chat.id = -999
             dialog.chat.title = "Discovered"
             dialog.chat.username = "disc"

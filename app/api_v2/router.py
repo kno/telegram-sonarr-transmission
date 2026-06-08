@@ -10,6 +10,7 @@ import os
 import shutil
 import time
 import uuid
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
@@ -94,14 +95,17 @@ async def channel_messages(
     chat_id: int,
     apikey: str = Depends(_verify_apikey),
     before: int | None = Query(None),
+    after: int | None = Query(None),
     around: int | None = Query(None),
+    topic_id: int | None = Query(None),
     limit: int = Query(20, ge=1, le=50),
+    include_channel: bool = Query(True),
 ):
-    """Return downloadable channel messages with cursor pagination."""
+    """Return channel messages with bidirectional cursor pagination."""
     channel = _known_channel(chat_id)
     try:
-        page = await get_channel_messages(chat_id, before=before, around=around, limit=limit)
-        metadata = await get_channel_info(chat_id)
+        page = await get_channel_messages(chat_id, before=before, after=after, around=around, limit=limit, topic_id=topic_id)
+        metadata = await get_channel_info(chat_id) if include_channel else None
     except TimeoutError as e:
         raise _telegram_error(429, str(e) or "Telegram rate limit, retry later")
     except RuntimeError as e:
@@ -170,7 +174,13 @@ async def search(
             {
                 "title": item["title"],
                 "guid": item["guid"],
+                "chatId": item["chat_id"],
+                "msgId": item["msg_id"],
                 "link": item["link"],
+                "downloadUrl": (
+                    f"{settings.BASE_URL}/api/download"
+                    f"?id={quote(item['guid'], safe='')}&apikey={settings.TORZNAB_APIKEY}"
+                ),
                 "pubDate": item["pub_date"].isoformat() if item["pub_date"] else None,
                 "size": item["size"],
                 "categoryId": item["category_id"],

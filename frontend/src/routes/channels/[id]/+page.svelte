@@ -7,16 +7,18 @@
 	const foundMessageId = typeof window !== 'undefined'
 		? Number(new URLSearchParams(window.location.search).get('message')) || undefined
 		: undefined;
-	const limit = 20;
+	const limit = 50;
+	type PageParams = { before?: number; after?: number; around?: number; topicId?: number | null };
 
 	let loading = $state(true);
 	let error = $state('');
 	let channel = $state<ChannelInfo | null>(null);
 	let messages = $state<ChannelMessage[]>([]);
-	let hasMore = $state(false);
-	let nextCursor = $state<number | null>(null);
-	let currentCursor = $state<number | undefined>(undefined);
-	let pageStack = $state<(number | undefined)[]>([]);
+	let hasOlder = $state(false);
+	let olderCursor = $state<number | null>(null);
+	let hasNewer = $state(false);
+	let newerCursor = $state<number | null>(null);
+	let currentPage = $state<PageParams>({ around: foundMessageId });
 	let downloadState = $state<Record<number, 'loading' | 'done' | 'error'>>({});
 	let downloadErrors = $state<Record<number, string>>({});
 
@@ -25,7 +27,15 @@
 		return `${message.thumbnail_url}?apikey=${encodeURIComponent(settings.apiKey)}`;
 	}
 
-	async function loadMessages(before?: number, pushHistory = false, around?: number) {
+	function messageTitle(message: ChannelMessage) {
+		if (message.filename) return message.filename;
+		if (message.caption) return message.caption;
+		if (message.text) return message.text;
+		if (!message.downloadable) return 'Contenido no soportado por Telegram API';
+		return message.mime_type?.startsWith('text/') ? 'Archivo de texto' : 'Archivo sin nombre';
+	}
+
+	async function loadMessages(page: PageParams = {}, includeChannel = true) {
 		if (!settings.apiKey) {
 			error = 'API key no configurada';
 			loading = false;
@@ -34,13 +44,16 @@
 		loading = true;
 		error = '';
 		try {
-			const response = await getChannelMessages(settings.apiKey, chatId, before, limit, around);
-			if (pushHistory) pageStack = [...pageStack, currentCursor];
-			currentCursor = before;
-			channel = response.channel;
-			messages = response.messages;
-			hasMore = response.has_more;
-			nextCursor = response.next_cursor;
+			const response = await getChannelMessages(settings.apiKey, chatId, page.before, limit, page.around, includeChannel, page.topicId, page.after);
+			currentPage = { ...page, topicId: response.topic_id ?? page.topicId };
+			if (includeChannel) channel = response.channel;
+			if (response.messages.length > 0 || messages.length === 0) {
+				messages = response.messages.reverse();
+			}
+			hasOlder = response.has_older;
+			olderCursor = response.older_cursor;
+			hasNewer = response.has_newer;
+			newerCursor = response.newer_cursor;
 		} catch (e: any) {
 			error = e.message || 'Error al cargar mensajes del canal';
 		} finally {
@@ -48,16 +61,14 @@
 		}
 	}
 
-	async function nextPage() {
-		if (nextCursor === null) return;
-		await loadMessages(nextCursor, true);
+	async function goOlder() {
+		if (!olderCursor) return;
+		await loadMessages({ before: olderCursor, topicId: currentPage.topicId }, false);
 	}
 
-	async function prevPage() {
-		if (pageStack.length === 0) return;
-		const previous = pageStack[pageStack.length - 1];
-		pageStack = pageStack.slice(0, -1);
-		await loadMessages(previous, false);
+	async function goNewer() {
+		if (!newerCursor) return;
+		await loadMessages({ after: newerCursor, topicId: currentPage.topicId }, false);
 	}
 
 	async function downloadMessage(message: ChannelMessage) {
@@ -73,7 +84,7 @@
 	}
 
 	$effect(() => {
-		if (settings.apiKey) loadMessages(undefined, false, foundMessageId);
+		if (settings.apiKey) loadMessages({ around: foundMessageId });
 	});
 </script>
 
@@ -107,7 +118,7 @@
 {#if error}
 	<div class="mb-4 rounded-md border border-(--color-danger) bg-(--color-danger)/10 p-3 text-sm text-(--color-danger)" role="alert">
 		<p>{error}</p>
-		<button onclick={() => loadMessages(currentCursor)} class="mt-2 rounded-md border border-(--color-danger) px-3 py-1 text-xs">
+		<button onclick={() => loadMessages(currentPage, false, channel === null)} class="mt-2 rounded-md border border-(--color-danger) px-3 py-1 text-xs">
 			Reintentar
 		</button>
 	</div>
@@ -119,9 +130,25 @@
 	</div>
 {:else if !error && messages.length === 0}
 	<div class="rounded-lg border border-(--color-border) bg-(--color-surface) p-8 text-center text-(--color-text-muted)">
-		No hay archivos disponibles en este canal.
+		No hay mensajes disponibles en este canal.
 	</div>
 {:else if messages.length > 0}
+	<div class="mb-4 flex justify-center gap-3">
+		<button
+			onclick={goOlder}
+			disabled={loading || !hasOlder || olderCursor === null}
+			class="rounded-md border border-(--color-border) px-4 py-2 text-sm transition-colors hover:bg-(--color-surface-hover) disabled:opacity-30"
+		>
+			← Más antiguos
+		</button>
+		<button
+			onclick={goNewer}
+			disabled={loading || !hasNewer || newerCursor === null}
+			class="rounded-md border border-(--color-border) px-4 py-2 text-sm transition-colors hover:bg-(--color-surface-hover) disabled:opacity-30"
+		>
+			Más recientes →
+		</button>
+	</div>
 	<div class="grid gap-3">
 		{#each messages as message (message.message_id)}
 			<div class="rounded-lg border border-(--color-border) bg-(--color-surface) p-4" class:ring-2={message.message_id === foundMessageId} class:ring-(--color-primary)={message.message_id === foundMessageId}>
@@ -133,34 +160,51 @@
 						<img src={thumbnailSrc(message)} alt={`Miniatura de ${message.filename || 'archivo'}`} class="h-20 w-28 shrink-0 rounded object-cover" loading="lazy" />
 					{/if}
 					<div class="min-w-0 flex-1">
-						<p class="break-all text-sm font-medium">{message.filename || 'unknown'}</p>
+						<p class="break-all text-sm font-medium">{messageTitle(message)}</p>
 						{#if message.caption || message.text}
 							<p class="mt-1 line-clamp-2 text-xs text-(--color-text-muted)">{message.caption || message.text}</p>
 						{/if}
 						<p class="mt-1 flex gap-2 text-xs text-(--color-text-muted)">
-							<span>{formatSize(message.file_size)}</span>
+							{#if message.sender_name}
+								<span>{message.sender_name}</span>
+							{/if}
+							{#if message.file_size !== null}
+								<span>{formatSize(message.file_size)}</span>
+							{:else}
+								<span>Sin archivo</span>
+							{/if}
 							<span>{message.date ? formatDate(message.date) : 'Sin fecha'}</span>
 						</p>
 					</div>
-					<div class="flex items-center gap-2">
-						{#if downloadErrors[message.message_id]}
-							<span class="text-xs text-(--color-danger)">{downloadErrors[message.message_id]}</span>
-						{/if}
-						<button
-							onclick={() => downloadMessage(message)}
-							disabled={downloadState[message.message_id] === 'loading' || downloadState[message.message_id] === 'done'}
-							class="rounded-md px-3 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-50
-								{downloadState[message.message_id] === 'done' ? 'bg-(--color-success)' : 'bg-(--color-primary) hover:bg-(--color-primary-hover)'}"
-						>
-							{#if downloadState[message.message_id] === 'loading'}
-								Enviando...
-							{:else if downloadState[message.message_id] === 'done'}
-								Enviado
-							{:else}
-								Descargar
+					<a
+						href={message.telegram_url}
+						target="_blank"
+						rel="noreferrer"
+						class="text-xs font-medium text-(--color-primary) hover:underline"
+					>
+						Abrir en Telegram
+					</a>
+					{#if message.downloadable}
+						<div class="flex items-center gap-2">
+							{#if downloadErrors[message.message_id]}
+								<span class="text-xs text-(--color-danger)">{downloadErrors[message.message_id]}</span>
 							{/if}
-						</button>
-					</div>
+							<button
+								onclick={() => downloadMessage(message)}
+								disabled={downloadState[message.message_id] === 'loading' || downloadState[message.message_id] === 'done'}
+								class="rounded-md px-3 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-50
+									{downloadState[message.message_id] === 'done' ? 'bg-(--color-success)' : 'bg-(--color-primary) hover:bg-(--color-primary-hover)'}"
+							>
+								{#if downloadState[message.message_id] === 'loading'}
+									Enviando...
+								{:else if downloadState[message.message_id] === 'done'}
+									Enviado
+								{:else}
+									Descargar
+								{/if}
+							</button>
+						</div>
+					{/if}
 				</div>
 			</div>
 		{/each}
@@ -169,17 +213,17 @@
 
 <div class="mt-4 flex justify-center gap-3">
 	<button
-		onclick={prevPage}
-		disabled={loading || pageStack.length === 0}
+		onclick={goOlder}
+		disabled={loading || !hasOlder || olderCursor === null}
 		class="rounded-md border border-(--color-border) px-4 py-2 text-sm transition-colors hover:bg-(--color-surface-hover) disabled:opacity-30"
 	>
-		Anterior
+		← Más antiguos
 	</button>
 	<button
-		onclick={nextPage}
-		disabled={loading || !hasMore || nextCursor === null}
+		onclick={goNewer}
+		disabled={loading || !hasNewer || newerCursor === null}
 		class="rounded-md border border-(--color-border) px-4 py-2 text-sm transition-colors hover:bg-(--color-surface-hover) disabled:opacity-30"
 	>
-		Siguiente
+		Más recientes →
 	</button>
 </div>

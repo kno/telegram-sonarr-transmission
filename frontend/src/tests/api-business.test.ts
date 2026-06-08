@@ -139,7 +139,7 @@ describe('channel browser API', () => {
 	});
 
 	it('getChannelMessages builds URL without cursor', async () => {
-		const response = { messages: [], has_more: false, next_cursor: null, channel: { id: -1001234, title: 'Series' } };
+		const response = { messages: [], has_older: false, older_cursor: null, has_newer: false, newer_cursor: null, channel: { id: -1001234, title: 'Series' } };
 		const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(response) });
 		vi.stubGlobal('fetch', mockFetch);
 
@@ -149,13 +149,14 @@ describe('channel browser API', () => {
 		expect(mockFetch.mock.calls[0][0]).toContain('/api/v2/channels/-1001234/messages');
 		expect(mockFetch.mock.calls[0][0]).toContain('apikey=key');
 		expect(mockFetch.mock.calls[0][0]).toContain('limit=20');
+		expect(mockFetch.mock.calls[0][0]).not.toContain('include_channel=');
 		expect(mockFetch.mock.calls[0][0]).not.toContain('before=');
 	});
 
 	it('getChannelMessages includes cursor when provided', async () => {
 		const mockFetch = vi.fn().mockResolvedValue({
 			ok: true,
-			json: () => Promise.resolve({ messages: [], has_more: false, next_cursor: null, channel: { id: -1001234, title: 'Series' } })
+			json: () => Promise.resolve({ messages: [], has_older: false, older_cursor: null, has_newer: false, newer_cursor: null, channel: { id: -1001234, title: 'Series' } })
 		});
 		vi.stubGlobal('fetch', mockFetch);
 
@@ -168,7 +169,7 @@ describe('channel browser API', () => {
 	it('getChannelMessages includes around message when provided', async () => {
 		const mockFetch = vi.fn().mockResolvedValue({
 			ok: true,
-			json: () => Promise.resolve({ messages: [], has_more: false, next_cursor: null, channel: { id: -1001234, title: 'Series' } })
+			json: () => Promise.resolve({ messages: [], has_older: false, older_cursor: null, has_newer: false, newer_cursor: null, channel: { id: -1001234, title: 'Series' } })
 		});
 		vi.stubGlobal('fetch', mockFetch);
 
@@ -176,6 +177,30 @@ describe('channel browser API', () => {
 
 		expect(mockFetch.mock.calls[0][0]).toContain('around=251258');
 		expect(mockFetch.mock.calls[0][0]).not.toContain('before=');
+	});
+
+	it('getChannelMessages can omit channel metadata', async () => {
+		const mockFetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve({ messages: [], has_older: false, older_cursor: null, has_newer: false, newer_cursor: null, channel: { id: -1001234, title: 'Series' } })
+		});
+		vi.stubGlobal('fetch', mockFetch);
+
+		await getChannelMessages('key', -1001234, 251240, 10, undefined, false);
+
+		expect(mockFetch.mock.calls[0][0]).toContain('include_channel=false');
+	});
+
+	it('getChannelMessages includes topic filter when provided', async () => {
+		const mockFetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve({ messages: [], has_older: false, older_cursor: null, has_newer: false, newer_cursor: null, topic_id: 900, channel: { id: -1001234, title: 'Series' } })
+		});
+		vi.stubGlobal('fetch', mockFetch);
+
+		await getChannelMessages('key', -1001234, 251240, 10, undefined, false, 900);
+
+		expect(mockFetch.mock.calls[0][0]).toContain('topic_id=900');
 	});
 
 	it('getChannelMessages throws retryable status details', async () => {

@@ -108,7 +108,7 @@ async def download_torrent(
 
     client = get_client()
     try:
-        message = await client.get_messages(int(chat_id), msg_id_int)
+        message = await client.get_download_message(int(chat_id), msg_id_int)
     except Exception as e:
         logger.error("Failed to get message %s:%s: %s", chat_id, msg_id, e)
         return torznab_error(300, "Message not found")

@@ -78,7 +78,7 @@ async def stream_file(
     if not cached:
         client = get_client()
         try:
-            message = await client.get_messages(int(chat_id), int(msg_id))
+            message = await client.get_download_message(int(chat_id), int(msg_id))
         except Exception as e:
             logger.error("Stream: failed to get message %s:%s: %s", chat_id, msg_id, e)
             return torznab_error(300, "Message not found")

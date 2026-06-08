@@ -9,7 +9,7 @@ from app.download import _bdecode
 class TestDownloadRouter:
     async def test_success(self, async_client, mock_telegram_client, mock_message):
         msg = mock_message(msg_id=42, file_name="video.mkv", file_size=1048576)
-        mock_telegram_client.get_messages = AsyncMock(return_value=msg)
+        mock_telegram_client.get_download_message = AsyncMock(return_value=msg)
 
         resp = await async_client.get("/api/download", params={
             "id": "-100:42",
@@ -49,7 +49,7 @@ class TestDownloadRouter:
         assert root.get("code") == "201"
 
     async def test_message_not_found(self, async_client, mock_telegram_client):
-        mock_telegram_client.get_messages = AsyncMock(side_effect=Exception("Not found"))
+        mock_telegram_client.get_download_message = AsyncMock(side_effect=Exception("Not found"))
         resp = await async_client.get("/api/download", params={
             "id": "-100:42",
             "apikey": "testapikey",
@@ -59,7 +59,7 @@ class TestDownloadRouter:
 
     async def test_no_document(self, async_client, mock_telegram_client, mock_message):
         msg = mock_message(has_document=False)
-        mock_telegram_client.get_messages = AsyncMock(return_value=msg)
+        mock_telegram_client.get_download_message = AsyncMock(return_value=msg)
         resp = await async_client.get("/api/download", params={
             "id": "-100:42",
             "apikey": "testapikey",

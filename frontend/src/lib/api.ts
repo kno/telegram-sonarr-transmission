@@ -62,14 +62,20 @@ export async function getChannelMessages(
 	chatId: number,
 	before?: number,
 	limit = 20,
-	around?: number
+	around?: number,
+	includeChannel = true,
+	topicId?: number | null,
+	after?: number
 ): Promise<ChannelMessagesResponse> {
 	const base = getBaseUrl();
 	const url = new URL(`${base}/api/v2/channels/${chatId}/messages`, window.location.origin);
 	url.searchParams.set('apikey', apiKey);
 	url.searchParams.set('limit', String(limit));
+	if (!includeChannel) url.searchParams.set('include_channel', 'false');
+	if (topicId !== undefined && topicId !== null) url.searchParams.set('topic_id', String(topicId));
 	if (around !== undefined) url.searchParams.set('around', String(around));
 	else if (before !== undefined) url.searchParams.set('before', String(before));
+	else if (after !== undefined) url.searchParams.set('after', String(after));
 
 	const res = await fetch(url.toString());
 	if (!res.ok) {
@@ -441,10 +447,12 @@ export function formatEta(seconds: number): string {
 
 export function formatDate(dateStr: string): string {
 	try {
-		return new Date(dateStr).toLocaleDateString('es', {
+		return new Date(dateStr).toLocaleString('es', {
 			day: '2-digit',
 			month: 'short',
-			year: 'numeric'
+			year: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit'
 		});
 	} catch {
 		return dateStr;

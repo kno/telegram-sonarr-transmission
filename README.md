@@ -22,9 +22,9 @@ Sonarr/Radarr                    Telegram Torznab                     Telegram
      |<-- progress/completion ----------|                                 |
 ```
 
-1. **Search** — Sonarr queries the Torznab `/api` endpoint. The server searches Telegram channels concurrently and returns results as Torznab RSS XML.
+1. **Search** — Sonarr queries the Torznab `/api` endpoint. The server searches Telegram channels concurrently with Telethon and returns results as Torznab RSS XML.
 2. **Grab** — Sonarr requests the `.torrent` file. Instead of a real torrent, the server returns a synthetic `.torrent` containing `chat_id:msg_id` in its comment field.
-3. **Download** — Sonarr sends the `.torrent` to the built-in Transmission RPC emulator. It extracts `chat_id:msg_id`, downloads the actual file from Telegram in the background, and reports progress back to Sonarr as if it were a real torrent transfer.
+3. **Download** — Sonarr sends the `.torrent` to the built-in Transmission RPC emulator. It extracts `chat_id:msg_id`, refetches that message with the Pyrogram download backend, downloads the actual file from Telegram in the background, and reports progress back to Sonarr as if it were a real torrent transfer.
 
 ## Prerequisites
 
@@ -64,12 +64,19 @@ docker compose --profile auth run --rm torznab-auth
 
 This will:
 1. Connect to Telegram using your `API_ID`, `API_HASH`, and `PHONE`
-2. Send a verification code to your Telegram app
+2. Send a verification code to your Telegram app when a session is missing
 3. Prompt you to enter the code
 4. If 2FA is enabled, prompt for your password
-5. Save the session file to `./data/torznab_session.session`
+5. Save the Telethon metadata session to `./data/torznab_session_telethon.session`
+6. Save or reuse the Pyrogram download session at `./data/torznab_session.session`
 
-The session file persists in the `./data/` volume. You only need to run this once unless the session expires or is revoked.
+The session files persist in the `./data/` volume. Telethon is used for search, dialogs, channel metadata, and API v2 browsing. Pyrogram with TgCrypto is used only for high-throughput download and streaming paths. If `./data/torznab_session.session` already exists from the older Pyrogram version, auth reuses it and does not require a new Pyrogram login.
+
+To authenticate only one backend:
+```bash
+docker compose --profile auth run --rm torznab-auth --backend telethon
+docker compose --profile auth run --rm torznab-auth --backend pyrogram
+```
 
 ### 3. Start the server
 
@@ -194,7 +201,7 @@ python3 -m pytest                                       # Run all tests
 python3 -m pytest --cov=app --cov-report=term-missing   # With coverage
 ```
 
-196 tests covering all backend modules (92% coverage). Tests use mocked Telegram API — no real connection needed.
+Backend tests cover the Telegram adapter with mocks — no real connection needed. Passing automated tests does not replace the real-credential search gate before committing this migration.
 
 A pre-commit hook runs tests automatically before each commit.
 
@@ -204,7 +211,7 @@ A pre-commit hook runs tests automatically before each commit.
 app/
   main.py              # FastAPI app, lifespan (connects Telegram on startup)
   config.py            # pydantic-settings configuration
-  telegram_client.py   # Singleton Pyrogram client
+  telegram_client.py   # Hybrid Telegram adapter: Telethon metadata, Pyrogram downloads
   channels.py          # Channel registry (auto-discovery, JSON persistence)
   download.py          # /api/download — synthetic .torrent generation
   stream.py            # /api/stream — file serving with Range support
@@ -228,7 +235,7 @@ frontend/
       components/      # Navbar, SearchResultCard, DownloadRow, ProgressBar, ThemeToggle
     routes/            # SvelteKit file-based routing (/, /search, /downloads, /channels, /settings)
   build/               # Pre-built static output served by FastAPI
-tests/                 # pytest test suite (196 tests, 92% coverage)
+tests/                 # pytest test suite (361 tests, 85% coverage)
   conftest.py          # Shared fixtures (mock client, test settings, async_client)
   test_config.py       # Config/settings tests
   test_download.py     # Bencode/bdecode + torrent generation tests
